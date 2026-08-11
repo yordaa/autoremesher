@@ -47,9 +47,21 @@ The release build was measured on macOS arm64 at the pinned base using four TBB 
 
 The black-box suite also generates its own organic and hard-surface fixtures, records wall time, peak RSS, face and quad counts, and verifies boundary, component, index, and manifold invariants. Run `ctest --test-dir build-headless -V` to see the recorded metrics. `otool -L` reports only Apple Accelerate, libc++, and libSystem. Qt and dynamic TBB are absent.
 
+## Windows x64
+
+```powershell
+cmake -S . -B build -A x64 -DBUILD_TESTING=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release -V --output-on-failure
+```
+
+The Windows target builds the bundled TBB 2017.0 and the MSVC runtime statically. The `windows-cli` GitHub Actions job runs the same black-box contract as macOS, rejects Qt/TBB/MSVC-runtime DLL imports, records wall time and peak RSS, packages the required notices, hashes the executable and ZIP, and uploads the evidence with the standalone artifact.
+
+The accepted platform difference is TBB 2017.0 on Windows versus oneTBB 2023.0.0 on macOS. Both are statically linked and pass the same observable CLI contract; exact output face counts may differ with platform scheduling and floating-point behavior.
+
 ## Decision
 
-**GO to Windows parity (#730), but do not ship yet.** The macOS spike proves the external executable boundary, honest progress, cancellation, bounded concurrency, output validation, and a commercially usable compiled dependency closure. Windows must reproduce the same contract and bundle the recorded license notices before EzDesign integration begins. The conservative size limits above remain until the production benchmark corpus justifies changing them.
+**GO to EzDesign integration (#731), but do not ship yet.** macOS arm64 and Windows x64 now prove the external executable boundary, honest progress, process cancellation, bounded concurrency, output validation, and a commercially usable compiled dependency closure. Packaging and signing inside EzDesign remain the release gate. The conservative size limits above remain until the production benchmark corpus justifies changing them.
 
 ## Compiled dependency closure
 
@@ -58,8 +70,9 @@ The black-box suite also generates its own organic and hard-surface fixtures, re
 | AutoRemesher core and CLI | pinned repository revision above | [`LICENSE`](LICENSE), MIT |
 | isotropicremesher | bundled source at this revision | [`thirdparty/isotropicremesher/LICENSE`](thirdparty/isotropicremesher/LICENSE), MIT |
 | Eigen | bundled 5.0.1, built with `EIGEN_MPL2_ONLY` | [`thirdparty/eigen/COPYING.README`](thirdparty/eigen/COPYING.README) and `COPYING.MPL2` |
-| oneTBB | Homebrew 2023.0.0, statically linked | [`thirdparty/tbb/LICENSE`](thirdparty/tbb/LICENSE), Apache-2.0 |
+| TBB | macOS Homebrew oneTBB 2023.0.0; Windows bundled 2017.0, both statically linked | [`thirdparty/tbb/LICENSE`](thirdparty/tbb/LICENSE), Apache-2.0 |
 | tinyobjloader | bundled header used by the CLI | MIT notice at the top of [`src/tiny_obj_loader.h`](src/tiny_obj_loader.h) |
-| Apple Accelerate, libc++, libSystem | operating-system components | Not redistributed separately |
+| Apple Accelerate, libc++, libSystem, Windows system DLLs | operating-system components | Not redistributed separately |
+| MSVC runtime | GitHub-hosted Visual Studio 2022 toolchain, statically linked on Windows | No separate runtime files redistributed |
 
 The Qt GUI and its dependencies are not part of this target. Geogram, Exploragram, OpenNL, CoMISo, libigl, and zlib are not compiled or linked into this target.

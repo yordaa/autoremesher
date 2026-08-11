@@ -17,4 +17,92 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
       - name: Test CLI contract
-        run: ctest --test-dir build -C Release -V --output-on-failure
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release -V --output-on-failure 2>&1 | Tee-Object windows-test-log.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify and package standalone executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Resolve-Path "build/Release/autoremesher-cli.exe").Path
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe" |
+            Sort-Object FullName | Select-Object -Last 1
+          if (-not $dumpbin) { throw "dumpbin.exe was not found" }
+
+          $imports = & $dumpbin.FullName /dependents $exe
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
+          $imports | Set-Content windows-dependencies.txt
+          if (($imports -join "`n") -match '(?i)(qt[^\s]*|tbb|vcruntime|msvcp\d*)\.dll') {
+            throw "The executable imports a forbidden redistributable DLL"
+          }
+
+          $stdout = "$env:RUNNER_TEMP/benchmark.stdout.txt"
+          $stderr = "$env:RUNNER_TEMP/benchmark.stderr.txt"
+          $output = "$env:RUNNER_TEMP/benchmark-output.obj"
+          $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+          $process = Start-Process -FilePath $exe -ArgumentList @(
+            "--input", (Resolve-Path "tests/fixtures/icosahedron.obj").Path,
+            "--output", $output,
+            "--target-quads", "5000",
+            "--threads", "4"
+          ) -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $peakRss = 0L
+          while (-not $process.HasExited) {
+            $process.Refresh()
+            $peakRss = [Math]::Max($peakRss, $process.PeakWorkingSet64)
+            Start-Sleep -Milliseconds 5
+          }
+          $process.WaitForExit()
+          $stopwatch.Stop()
+          if ($process.ExitCode -ne 0) {
+            Get-Content $stderr
+            throw "Benchmark failed with exit code $($process.ExitCode)"
+          }
+          $result = Get-Content $stdout | Where-Object { $_ -like "RESULT *" } | Select-Object -Last 1
+
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "commit=$env:GITHUB_SHA"
+            "runner=windows-2022"
+            "architecture=x64"
+            "tbb=2017.0 bundled static"
+            "msvc_runtime=static"
+            "wall_ms=$($stopwatch.ElapsedMilliseconds)"
+            "peak_rss_bytes=$peakRss"
+            "result=$result"
+            "exe_sha256=$exeHash"
+          ) | Set-Content windows-evidence.txt
+
+          $package = New-Item -ItemType Directory -Force windows-package
+          Copy-Item $exe "$package/autoremesher-cli.exe"
+          Copy-Item LICENSE "$package/LICENSE-AutoRemesher.txt"
+          Copy-Item thirdparty/isotropicremesher/LICENSE "$package/LICENSE-isotropicremesher.txt"
+          Copy-Item thirdparty/tbb/LICENSE "$package/LICENSE-TBB.txt"
+          Copy-Item thirdparty/eigen/COPYING.MPL2 "$package/LICENSE-Eigen-MPL2.txt"
+          Copy-Item thirdparty/eigen/COPYING.README "$package/NOTICE-Eigen.txt"
+          Get-Content src/tiny_obj_loader.h -TotalCount 24 | Set-Content "$package/LICENSE-tinyobjloader.txt"
+          @(
+            "AutoRemesher core and CLI: MIT"
+            "isotropicremesher: MIT"
+            "Intel TBB 2017.0: Apache-2.0"
+            "Eigen 5.0.1 with EIGEN_MPL2_ONLY: MPL-2.0"
+            "tinyobjloader: MIT"
+            "MSVC runtime: statically linked by the GitHub-hosted Visual Studio toolchain"
+          ) | Set-Content "$package/THIRD_PARTY_NOTICES.txt"
+
+          Compress-Archive -Path "$package/*" -DestinationPath autoremesher-cli-windows-x64.zip
+          $zipHash = (Get-FileHash autoremesher-cli-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "$exeHash  autoremesher-cli.exe"
+            "$zipHash  autoremesher-cli-windows-x64.zip"
+          ) | Set-Content SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autoremesher-cli-windows-x64
+          path: |
+            autoremesher-cli-windows-x64.zip
+            SHA256SUMS.txt
+            windows-dependencies.txt
+            windows-evidence.txt
+            windows-test-log.txt
