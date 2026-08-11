@@ -57,7 +57,11 @@ add_library(autoremesher-core STATIC
 target_compile_features(autoremesher-core PUBLIC cxx_std_14)
 target_compile_definitions(autoremesher-core PUBLIC EIGEN_MPL2_ONLY)
 if(WIN32)
-    target_compile_definitions(autoremesher-core PUBLIC TBB_PREVIEW_GLOBAL_CONTROL=1 __TBB_NO_IMPLICIT_LINKAGE=1)
+    target_compile_definitions(autoremesher-core PUBLIC
+        NOMINMAX
+        TBB_PREVIEW_GLOBAL_CONTROL=1
+        _USE_MATH_DEFINES
+        __TBB_NO_IMPLICIT_LINKAGE=1)
 endif()
 target_include_directories(autoremesher-core
     PUBLIC
