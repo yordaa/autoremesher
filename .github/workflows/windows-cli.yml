@@ -10,6 +10,7 @@ on:
 jobs:
   windows-x64:
     runs-on: windows-2022
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -72,6 +73,9 @@ jobs:
             "peak_rss_bytes=$peakRss"
             "result=$result"
             "exe_sha256=$exeHash"
+            "child_processes=none"
+            "final_output=published only by complete-file rename"
+            "accepted_difference=TerminateProcess cannot remove an in-progress temporary file; EzDesign owns and removes the process temporary directory"
           ) | Set-Content windows-evidence.txt
 
           $package = New-Item -ItemType Directory -Force windows-package
@@ -79,14 +83,13 @@ jobs:
           Copy-Item LICENSE "$package/LICENSE-AutoRemesher.txt"
           Copy-Item thirdparty/isotropicremesher/LICENSE "$package/LICENSE-isotropicremesher.txt"
           Copy-Item thirdparty/tbb/LICENSE "$package/LICENSE-TBB.txt"
-          Copy-Item thirdparty/eigen/COPYING.MPL2 "$package/LICENSE-Eigen-MPL2.txt"
-          Copy-Item thirdparty/eigen/COPYING.README "$package/NOTICE-Eigen.txt"
+          Copy-Item thirdparty/eigen/COPYING.* $package
           Get-Content src/tiny_obj_loader.h -TotalCount 24 | Set-Content "$package/LICENSE-tinyobjloader.txt"
           @(
             "AutoRemesher core and CLI: MIT"
             "isotropicremesher: MIT"
             "Intel TBB 2017.0: Apache-2.0"
-            "Eigen 5.0.1 with EIGEN_MPL2_ONLY: MPL-2.0"
+            "Eigen 5.0.1 with EIGEN_MPL2_ONLY: MPL-2.0 and bundled compatible notices"
             "tinyobjloader: MIT"
             "MSVC runtime: statically linked by the GitHub-hosted Visual Studio toolchain"
           ) | Set-Content "$package/THIRD_PARTY_NOTICES.txt"
