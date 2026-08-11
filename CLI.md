@@ -59,6 +59,8 @@ The Windows target builds the bundled TBB 2017.0 and the MSVC runtime statically
 
 The accepted platform difference is TBB 2017.0 on Windows versus oneTBB 2023.0.0 on macOS. Both are statically linked and pass the same observable CLI contract; exact output face counts may differ with platform scheduling and floating-point behavior.
 
+Windows process-tree termination is abrupt and cannot run the CLI's in-process temporary-file cleanup. The CLI starts no child processes, and the final destination is still absent or complete because publication is the last atomic rename. If termination lands during that final write, `<output>.tmp-<pid>` can remain. This is an accepted platform difference: EzDesign must place the process files in its existing unique temporary directory and remove that directory after termination, as required by #731.
+
 ## Decision
 
 **GO to EzDesign integration (#731), but do not ship yet.** macOS arm64 and Windows x64 now prove the external executable boundary, honest progress, process cancellation, bounded concurrency, output validation, and a commercially usable compiled dependency closure. Packaging and signing inside EzDesign remain the release gate. The conservative size limits above remain until the production benchmark corpus justifies changing them.
