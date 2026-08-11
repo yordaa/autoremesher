@@ -275,22 +275,38 @@ void AutoRemesher::updateProgress(size_t threadIndex, float progress)
 
 bool AutoRemesher::remesh()
 {
+    m_remeshedVertices.clear();
+    m_remeshedQuads.clear();
+    if (m_vertices.empty() || m_triangles.empty() || m_targetTriangleCount == 0) {
+        std::cerr << "Invalid remesh input" << std::endl;
+        return false;
+    }
+    for (const auto& triangle : m_triangles) {
+        if (triangle.size() != 3
+            || triangle[0] >= m_vertices.size()
+            || triangle[1] >= m_vertices.size()
+            || triangle[2] >= m_vertices.size()) {
+            std::cerr << "Invalid remesh triangle" << std::endl;
+            return false;
+        }
+    }
+
     if (nullptr != m_progressHandler)
-        m_progressHandler(m_tag, 0.0, "Initializing...");
+        m_progressHandler(m_tag, 0.0, "Preparing...");
 
     auto t_start = std::chrono::high_resolution_clock::now();
 
     auto t_voxelStart = std::chrono::high_resolution_clock::now();
-    initializeVoxelSize();
     if (nullptr != m_progressHandler)
-        m_progressHandler(m_tag, 0.01f, "Computing voxel size...");
+        m_progressHandler(m_tag, 0.0f, "Analyzing target density...");
+    initializeVoxelSize();
     auto t_voxelEnd = std::chrono::high_resolution_clock::now();
 
     std::vector<std::vector<std::vector<size_t>>> trianglesIslands;
     auto t_splitStart = std::chrono::high_resolution_clock::now();
-    MeshSeparator::splitToIslands(m_triangles, trianglesIslands);
     if (nullptr != m_progressHandler)
-        m_progressHandler(m_tag, 0.02f, "Splitting mesh into islands...");
+        m_progressHandler(m_tag, 0.01f, "Finding connected parts...");
+    MeshSeparator::splitToIslands(m_triangles, trianglesIslands);
     auto t_afterSplit = std::chrono::high_resolution_clock::now();
 
     if (trianglesIslands.empty()) {
@@ -317,6 +333,8 @@ bool AutoRemesher::remesh()
 
     std::vector<IslandContext> islandContexes;
     islandContexes.reserve(trianglesIslands.size());
+    if (nullptr != m_progressHandler)
+        m_progressHandler(m_tag, 0.02f, "Preparing connected parts...");
     for (size_t islandIndex = 0; islandIndex < trianglesIslands.size(); ++islandIndex) {
         const auto& island = trianglesIslands[islandIndex];
         IslandContext context;
@@ -344,11 +362,11 @@ bool AutoRemesher::remesh()
 
         islandContexes.push_back(context);
     }
-    if (nullptr != m_progressHandler)
-        m_progressHandler(m_tag, parallelPhaseBegin, "Building island contexts...");
     auto t_buildEnd = std::chrono::high_resolution_clock::now();
 
     {
+        if (nullptr != m_progressHandler)
+            m_progressHandler(m_tag, parallelPhaseBegin, "Building target topology...");
         m_threadProgressWeights.resize(islandContexes.size(), 1.0);
         for (size_t i = 0; i < islandContexes.size(); ++i) {
             if (!m_triangles.empty())
@@ -420,6 +438,11 @@ bool AutoRemesher::remesh()
         }
     }
 
+    if (nullptr != m_progressHandler)
+        m_progressHandler(m_tag,
+            parallelPhaseBegin + (parallelPhaseEnd - parallelPhaseBegin) * 0.3f,
+            "Fitting target topology...");
+
     class ParameterizationThread {
     public:
         ~ParameterizationThread()
@@ -439,6 +462,7 @@ bool AutoRemesher::remesh()
         std::vector<Vector3> capturedSingularVertices;
         std::vector<size_t> capturedSingularVertexIndices;
         std::vector<std::pair<Vector3, Vector3>> capturedExtractedConnections;
+        bool succeeded = false;
     };
 
     std::vector<ParameterizationThread> parameterizationThreads(islandContexes.size());
@@ -485,18 +509,16 @@ bool AutoRemesher::remesh()
                 thread.parameterizer->setSharpEdgeDegrees(thread.island->sharpEdgeDegrees);
                 bool parameterizeSucceeded = true;
                 try {
-                    thread.parameterizer->parameterize();
+                    parameterizeSucceeded = thread.parameterizer->parameterize();
                 } catch (const std::exception& e) {
-                    // A pathological island must not abort the whole remesh,
-                    // so log the parameterizer failure and skip its quads.
                     parameterizeSucceeded = false;
                     std::cerr << "Island " << (thread.islandIndex + 1)
                               << ": parameterization failed (" << e.what()
-                              << "), skipping this island." << std::endl;
+                              << ")." << std::endl;
                 } catch (...) {
                     parameterizeSucceeded = false;
                     std::cerr << "Island " << (thread.islandIndex + 1)
-                              << ": parameterization failed (unknown error), skipping this island." << std::endl;
+                              << ": parameterization failed (unknown error)." << std::endl;
                 }
 
                 auto t1 = std::chrono::high_resolution_clock::now();
@@ -522,6 +544,8 @@ bool AutoRemesher::remesh()
                         delete thread.remesher;
                         thread.remesher = nullptr;
                     } else {
+                        thread.succeeded = !thread.remesher->remeshedVertices().empty()
+                            && !thread.remesher->remeshedQuads().empty();
                         thread.capturedExtractedConnections = thread.remesher->extractedConnections();
                         thread.capturedExtractedConnectionMoved = thread.remesher->extractedConnectionMoved();
                     }
@@ -547,8 +571,14 @@ bool AutoRemesher::remesh()
             &extractTimeAccumulated));
     auto t_parallelEnd = std::chrono::high_resolution_clock::now();
 
+    if (!std::all_of(parameterizationThreads.begin(), parameterizationThreads.end(),
+            [](const ParameterizationThread& thread) { return thread.succeeded; })) {
+        std::cerr << "One or more mesh islands failed" << std::endl;
+        return false;
+    }
+
     if (nullptr != m_progressHandler)
-        m_progressHandler(m_tag, parallelPhaseEnd, "Merging mesh islands...");
+        m_progressHandler(m_tag, parallelPhaseEnd, "Combining connected parts...");
 
     // Merge isotropic UVs from all islands (for [param] preview)
     m_isotropicTriangleUvs.clear();
@@ -634,7 +664,7 @@ bool AutoRemesher::remesh()
     if (nullptr != m_progressHandler)
         m_progressHandler(m_tag, 1.0, "Done");
 
-    return true;
+    return !m_remeshedVertices.empty() && !m_remeshedQuads.empty();
 }
 
 }

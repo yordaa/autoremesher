@@ -1,6 +1,6 @@
 # AutoRemesher
 
-AutoRemesher is a cross-platform automatic quad remeshing tool that converts high-polygon meshes into clean quad-based topology. It is built on top of libraries: [Geogram](https://github.com/BrunoLevy/geogram), [libigl](https://github.com/libigl), [isotropicremesher](https://github.com/huxingyi/isotropicremesher) and [others](https://github.com/huxingyi/autoremesher/blob/master/ACKNOWLEDGEMENTS.html).
+AutoRemesher is a cross-platform automatic quad remeshing tool that converts high-polygon meshes into clean quad-based topology. Its current remeshing core uses Eigen, oneTBB, and [isotropicremesher](https://github.com/huxingyi/isotropicremesher).
 
 Buy me a coffee for staying up late coding :-) [![](https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=GHALWLWXYGCU6&item_name=Support+me+coding+in+my+spare+time&currency_code=AUD&source=url)
 
@@ -18,6 +18,8 @@ These instructions will get you a copy of **AutoRemesher** up and running on you
 - CMake 3.12 or later (only needed on Windows to build TBB from source)
 
 ### Building
+
+For the Qt-free executable and its machine-readable progress contract, see [CLI.md](CLI.md).
 
 #### Linux (Ubuntu/Debian)
 
