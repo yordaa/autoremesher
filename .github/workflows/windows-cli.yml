@@ -3,7 +3,7 @@ name: windows-cli
 on:
   push:
     branches:
-      - codex/windows-parity
+      - master
   pull_request:
   workflow_dispatch:
 
