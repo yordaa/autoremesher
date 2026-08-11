@@ -2,18 +2,22 @@ cmake_minimum_required(VERSION 3.16)
 
 project(AutoRemesherCli LANGUAGES CXX)
 
-if(APPLE)
+if(WIN32)
+    set(TBB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(TBB_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(TBB_BUILD_TBBMALLOC OFF CACHE BOOL "" FORCE)
+    set(TBB_BUILD_TBBMALLOC_PROXY OFF CACHE BOOL "" FORCE)
+    set(TBB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(thirdparty/tbb EXCLUDE_FROM_ALL)
+    set(TBB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tbb/include")
+    set(TBB_LIBRARY tbb_static)
+elseif(APPLE)
     set(AUTOREMESHER_DEFAULT_TBB_ROOT "/opt/homebrew/opt/tbb")
-else()
-    set(AUTOREMESHER_DEFAULT_TBB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tbb")
-endif()
-set(AUTOREMESHER_TBB_ROOT "${AUTOREMESHER_DEFAULT_TBB_ROOT}" CACHE PATH "TBB installation used by the Qt-free CLI")
-
-find_path(TBB_INCLUDE_DIR tbb/parallel_for.h
-    HINTS ${AUTOREMESHER_TBB_ROOT}
-    PATH_SUFFIXES include
-    REQUIRED)
-if(APPLE)
+    set(AUTOREMESHER_TBB_ROOT "${AUTOREMESHER_DEFAULT_TBB_ROOT}" CACHE PATH "TBB installation used by the Qt-free CLI")
+    find_path(TBB_INCLUDE_DIR tbb/parallel_for.h
+        HINTS ${AUTOREMESHER_TBB_ROOT}
+        PATH_SUFFIXES include
+        REQUIRED)
     find_package(TBB 2023.0.0 EXACT CONFIG REQUIRED
         HINTS ${AUTOREMESHER_TBB_ROOT}/lib/cmake/TBB
         NO_DEFAULT_PATH)
@@ -22,6 +26,12 @@ if(APPLE)
         PATH_SUFFIXES lib
         REQUIRED)
 else()
+    set(AUTOREMESHER_DEFAULT_TBB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tbb")
+    set(AUTOREMESHER_TBB_ROOT "${AUTOREMESHER_DEFAULT_TBB_ROOT}" CACHE PATH "TBB installation used by the Qt-free CLI")
+    find_path(TBB_INCLUDE_DIR tbb/parallel_for.h
+        HINTS ${AUTOREMESHER_TBB_ROOT}
+        PATH_SUFFIXES include
+        REQUIRED)
     find_library(TBB_LIBRARY tbb
         HINTS ${AUTOREMESHER_TBB_ROOT}
         PATH_SUFFIXES lib build2/Release
@@ -46,6 +56,9 @@ add_library(autoremesher-core STATIC
     thirdparty/isotropicremesher/isotropicremesher.cpp)
 target_compile_features(autoremesher-core PUBLIC cxx_std_14)
 target_compile_definitions(autoremesher-core PUBLIC EIGEN_MPL2_ONLY)
+if(WIN32)
+    target_compile_definitions(autoremesher-core PUBLIC TBB_PREVIEW_GLOBAL_CONTROL=1 __TBB_NO_IMPLICIT_LINKAGE=1)
+endif()
 target_include_directories(autoremesher-core
     PUBLIC
         include
