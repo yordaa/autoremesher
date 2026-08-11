@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.16)
 
+cmake_policy(SET CMP0091 NEW)
 project(AutoRemesherCli LANGUAGES CXX)
+
+if(APPLE)
+    set(AUTOREMESHER_DEFAULT_TBB_ROOT "/opt/homebrew/opt/tbb")
+else()
+    set(AUTOREMESHER_DEFAULT_TBB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tbb")
+endif()
+set(AUTOREMESHER_TBB_ROOT "${AUTOREMESHER_DEFAULT_TBB_ROOT}" CACHE PATH "TBB installation used by the Qt-free CLI")
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 if(WIN32)
     set(TBB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
@@ -11,13 +23,14 @@ if(WIN32)
     add_subdirectory(thirdparty/tbb EXCLUDE_FROM_ALL)
     set(TBB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tbb/include")
     set(TBB_LIBRARY tbb_static)
-elseif(APPLE)
-    set(AUTOREMESHER_DEFAULT_TBB_ROOT "/opt/homebrew/opt/tbb")
-    set(AUTOREMESHER_TBB_ROOT "${AUTOREMESHER_DEFAULT_TBB_ROOT}" CACHE PATH "TBB installation used by the Qt-free CLI")
+else()
     find_path(TBB_INCLUDE_DIR tbb/parallel_for.h
         HINTS ${AUTOREMESHER_TBB_ROOT}
         PATH_SUFFIXES include
         REQUIRED)
+endif()
+
+if(APPLE)
     find_package(TBB 2023.0.0 EXACT CONFIG REQUIRED
         HINTS ${AUTOREMESHER_TBB_ROOT}/lib/cmake/TBB
         NO_DEFAULT_PATH)
@@ -25,13 +38,7 @@ elseif(APPLE)
         HINTS ${AUTOREMESHER_TBB_ROOT}
         PATH_SUFFIXES lib
         REQUIRED)
-else()
-    set(AUTOREMESHER_DEFAULT_TBB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/tbb")
-    set(AUTOREMESHER_TBB_ROOT "${AUTOREMESHER_DEFAULT_TBB_ROOT}" CACHE PATH "TBB installation used by the Qt-free CLI")
-    find_path(TBB_INCLUDE_DIR tbb/parallel_for.h
-        HINTS ${AUTOREMESHER_TBB_ROOT}
-        PATH_SUFFIXES include
-        REQUIRED)
+elseif(NOT WIN32)
     find_library(TBB_LIBRARY tbb
         HINTS ${AUTOREMESHER_TBB_ROOT}
         PATH_SUFFIXES lib build2/Release
