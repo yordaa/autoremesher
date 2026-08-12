@@ -141,12 +141,12 @@ class CliBlackBoxTest(unittest.TestCase):
             root = pathlib.Path(directory)
             source = root / "too-large.obj"
             output = root / "output.obj"
-            source.write_text("v 0 0 0\n" * 25001, encoding="utf-8")
+            source.write_text("v 0 0 0\n" * 1000001, encoding="utf-8")
 
             result = self.run_cli(source, output)
 
             self.assertEqual(result.returncode, 3)
-            self.assertIn("vertex limit", result.stderr)
+            self.assertIn("vertex limit of 1000000", result.stderr)
             self.assertFalse(output.exists())
 
     def test_closed_organic_mesh_produces_progress_and_valid_output(self):
