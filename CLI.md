@@ -6,13 +6,12 @@ The `autoremesher-cli` target runs the remeshing core without Qt. Its pinned ups
 
 ```sh
 brew install cmake ninja tbb
-test "$(brew list --versions tbb)" = "tbb 2023.0.0"
 cmake -S . -B build-headless -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-headless
 ctest --test-dir build-headless --output-on-failure
 ```
 
-The build requires oneTBB 2023.0.0 exactly and links its static archive. Pass a different exact installation with `-DAUTOREMESHER_TBB_ROOT=/path/to/tbb`. The resulting executable does not require a Homebrew or Qt dynamic library at runtime.
+The build uses a CMake-provided TBB package and contains no Qt dependency. Windows standalone builds use the bundled static TBB by default; package managers can pass `-DAUTOREMESHER_USE_BUNDLED_TBB=OFF`.
 
 ## Run
 
@@ -24,7 +23,7 @@ build-headless/autoremesher-cli \
   --threads 4
 ```
 
-Input must be a non-empty, closed, consistently oriented manifold triangle OBJ. The initial measured safety limits are 25,000 input vertices, 25,000 input triangles, and 5,000 requested quads. Output is polygon OBJ and may contain non-quads.
+Input must be a non-empty, closed, consistently oriented manifold triangle OBJ. The safety limits are 1,000,000 input vertices, 1,000,000 input triangles, and 5,000 requested quads. Output is polygon OBJ and may contain non-quads.
 
 Stdout contains flushed progress and one final result line:
 
@@ -72,7 +71,7 @@ Windows process-tree termination is abrupt and cannot run the CLI's in-process t
 | AutoRemesher core and CLI | pinned repository revision above | [`LICENSE`](LICENSE), MIT |
 | isotropicremesher | bundled source at this revision | [`thirdparty/isotropicremesher/LICENSE`](thirdparty/isotropicremesher/LICENSE), MIT |
 | Eigen | bundled 5.0.1, built with `EIGEN_MPL2_ONLY` | [`thirdparty/eigen/COPYING.README`](thirdparty/eigen/COPYING.README) and `COPYING.MPL2` |
-| TBB | macOS Homebrew oneTBB 2023.0.0; Windows bundled 2017.0, both statically linked | [`thirdparty/tbb/LICENSE`](thirdparty/tbb/LICENSE), Apache-2.0 |
+| TBB | CMake package on macOS; bundled 2017.0 by default on Windows | [`thirdparty/tbb/LICENSE`](thirdparty/tbb/LICENSE), Apache-2.0 |
 | tinyobjloader | bundled header used by the CLI | MIT notice at the top of [`src/tiny_obj_loader.h`](src/tiny_obj_loader.h) |
 | Apple Accelerate, libc++, libSystem, Windows system DLLs | operating-system components | Not redistributed separately |
 | MSVC runtime | GitHub-hosted Visual Studio 2022 toolchain, statically linked on Windows | No separate runtime files redistributed |

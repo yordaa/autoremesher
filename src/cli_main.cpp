@@ -52,8 +52,8 @@
 
 namespace {
 
-constexpr size_t kMaxInputVertices = 25000;
-constexpr size_t kMaxInputTriangles = 25000;
+constexpr size_t kMaxInputVertices = 1000000;
+constexpr size_t kMaxInputTriangles = 1000000;
 constexpr size_t kMaxTargetQuads = 5000;
 
 #ifndef _WIN32
