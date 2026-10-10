@@ -20,10 +20,23 @@
  *  SOFTWARE.
  */
 #include <AutoRemesher/PositionKey>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace AutoRemesher {
 
-long PositionKey::m_toIntFactor = 100000;
+namespace {
+    std::int64_t quantize(double value)
+    {
+        const double scaled = value * 100000;
+        const double minimum = static_cast<double>(std::numeric_limits<std::int64_t>::min());
+        // The upper bound is exclusive: INT64_MAX rounds up to 2^63 in double.
+        if (!std::isfinite(scaled) || scaled < minimum || scaled >= -minimum)
+            throw std::out_of_range("Extracted position exceeds the supported coordinate range");
+        return static_cast<std::int64_t>(scaled);
+    }
+}
 
 PositionKey::PositionKey(const Vector3& v)
     : PositionKey(v.x(), v.y(), v.z())
@@ -36,9 +49,9 @@ PositionKey::PositionKey(double x, double y, double z)
     m_position.setY(y);
     m_position.setZ(z);
 
-    m_intX = (long)(x * m_toIntFactor);
-    m_intY = (long)(y * m_toIntFactor);
-    m_intZ = (long)(z * m_toIntFactor);
+    m_intX = quantize(x);
+    m_intY = quantize(y);
+    m_intZ = quantize(z);
 }
 
 const Vector3& PositionKey::position() const
