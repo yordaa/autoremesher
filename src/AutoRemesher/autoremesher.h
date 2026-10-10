@@ -41,6 +41,8 @@ enum class ModelType {
 typedef void (*AutoRemesherProgressHandler)(void* tag, float progress, const char* status);
 
 class AutoRemesher {
+    friend struct AutoRemesherOutputValidationTest;
+
 public:
     AutoRemesher(const std::vector<Vector3>& vertices,
         const std::vector<std::vector<size_t>>& triangles)
@@ -146,6 +148,9 @@ public:
     static const double m_defaultSharpEdgeDegrees;
 
 private:
+    static bool hasClosedOrientedEdges(const std::vector<std::vector<size_t>>& faces);
+    static const char* validateOutputIsland(const std::vector<Vector3>& vertices,
+        const std::vector<std::vector<size_t>>& faces, bool closedInput);
     std::vector<Vector3> m_vertices;
     std::vector<std::vector<size_t>> m_triangles;
     std::vector<Vector3> m_remeshedVertices;

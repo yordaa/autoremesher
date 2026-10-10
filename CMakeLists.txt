@@ -87,6 +87,10 @@ if(BUILD_TESTING)
     target_link_libraries(quadextractor-hole-filling-test PRIVATE autoremesher-core)
     add_test(NAME quadextractor-hole-filling COMMAND quadextractor-hole-filling-test)
 
+    add_executable(output-validation-test tests/output_validation.cpp)
+    target_link_libraries(output-validation-test PRIVATE autoremesher-core)
+    add_test(NAME output-validation COMMAND output-validation-test)
+
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(
         NAME cli-black-box
