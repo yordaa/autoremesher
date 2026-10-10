@@ -379,6 +379,13 @@ bool AutoRemesher::remesh()
         }
     }
 
+    for (const auto& vertex : m_vertices) {
+        if (!std::isfinite(vertex.x()) || !std::isfinite(vertex.y()) || !std::isfinite(vertex.z())) {
+            std::cerr << "Input mesh has a non-finite vertex" << std::endl;
+            return false;
+        }
+    }
+
     if (nullptr != m_progressHandler)
         m_progressHandler(m_tag, 0.0, "Preparing...");
 
@@ -388,6 +395,10 @@ bool AutoRemesher::remesh()
     if (nullptr != m_progressHandler)
         m_progressHandler(m_tag, 0.0f, "Analyzing target density...");
     initializeVoxelSize();
+    if (!std::isfinite(m_voxelSize) || m_voxelSize <= 0.0) {
+        std::cerr << "Input surface area is zero or outside the supported coordinate range" << std::endl;
+        return false;
+    }
     auto t_voxelEnd = std::chrono::high_resolution_clock::now();
 
     std::vector<std::vector<std::vector<size_t>>> trianglesIslands;
@@ -413,11 +424,18 @@ bool AutoRemesher::remesh()
         std::vector<std::vector<size_t>> triangles;
         bool closedInput;
         double voxelSize;
+        Vector3 origin;
+        double coordinateScale = 0.0;
         double scaling;
         double adaptivity;
         double anisotropy;
         double sharpEdgeDegrees;
         double smoothNormalDegrees;
+
+        Vector3 worldPosition(const Vector3& local) const
+        {
+            return local * coordinateScale + origin;
+        }
     };
 
     std::vector<IslandContext> islandContexes;
@@ -450,6 +468,30 @@ bool AutoRemesher::remesh()
         context.anisotropy = m_anisotropy;
         context.sharpEdgeDegrees = m_sharpEdgeDegrees;
         context.smoothNormalDegrees = m_smoothNormalDegrees;
+
+        Vector3 low = context.vertices.front(), high = low;
+        for (const auto& vertex : context.vertices) {
+            for (size_t axis = 0; axis < 3; ++axis) {
+                low[axis] = std::min(low[axis], vertex[axis]);
+                high[axis] = std::max(high[axis], vertex[axis]);
+            }
+        }
+        context.origin = low * 0.5 + high * 0.5;
+        for (size_t axis = 0; axis < 3; ++axis)
+            context.coordinateScale = std::max(context.coordinateScale, high[axis] - low[axis]);
+        if (!std::isfinite(context.coordinateScale) || context.coordinateScale <= 0.0) {
+            std::cerr << "Mesh island exceeds the supported coordinate range" << std::endl;
+            return false;
+        }
+        // Both area and target edge length now use island coordinates.
+        // Dividing the existing voxel size preserves the global budget.
+        context.voxelSize /= context.coordinateScale;
+        if (!std::isfinite(context.voxelSize) || context.voxelSize <= 0.0) {
+            std::cerr << "Mesh island exceeds the supported coordinate range" << std::endl;
+            return false;
+        }
+        for (auto& vertex : context.vertices)
+            vertex = (vertex - context.origin) / context.coordinateScale;
 
         islandContexes.push_back(context);
     }
@@ -517,8 +559,8 @@ bool AutoRemesher::remesh()
                 &isotropicIslandVertices, &isotropicIslandTriangles));
         for (size_t i = 0; i < isotropicIslandVertices.size(); ++i) {
             const size_t vertexOffset = m_isotropicVertices.size();
-            m_isotropicVertices.insert(m_isotropicVertices.end(),
-                isotropicIslandVertices[i].begin(), isotropicIslandVertices[i].end());
+            for (const auto& vertex : isotropicIslandVertices[i])
+                m_isotropicVertices.push_back(islandContexes[i].worldPosition(vertex));
             for (const auto& triangle : isotropicIslandTriangles[i]) {
                 std::vector<size_t> offsetTriangle;
                 offsetTriangle.reserve(triangle.size());
@@ -631,7 +673,14 @@ bool AutoRemesher::remesh()
                         uvs);
                     thread.remesher->setOriginalTriangleUvs(&thread.capturedOriginalUvs);
                     thread.remesher->setSingularVertices(&thread.capturedSingularVertexIndices);
-                    if (!thread.remesher->extract()) {
+                    bool extractSucceeded = false;
+                    try {
+                        extractSucceeded = thread.remesher->extract();
+                    } catch (const std::exception& e) {
+                        std::cerr << "Island " << (thread.islandIndex + 1)
+                                  << ": extraction failed (" << e.what() << ")." << std::endl;
+                    }
+                    if (!extractSucceeded) {
                         delete thread.remesher;
                         thread.remesher = nullptr;
                     } else {
@@ -694,16 +743,17 @@ bool AutoRemesher::remesh()
         auto& thread = parameterizationThreads[i];
         if (thread.capturedSingularVertices.empty())
             continue;
-        m_isotropicSingularVertices.insert(m_isotropicSingularVertices.end(),
-            thread.capturedSingularVertices.begin(), thread.capturedSingularVertices.end());
+        for (const auto& vertex : thread.capturedSingularVertices)
+            m_isotropicSingularVertices.push_back(thread.island->worldPosition(vertex));
     }
 
     // Merge the raw quad-extraction connections for the [param] preview.
     m_isotropicExtractedConnections.clear();
     m_isotropicExtractedConnectionMoved.clear();
     for (const auto& thread : parameterizationThreads) {
-        m_isotropicExtractedConnections.insert(m_isotropicExtractedConnections.end(),
-            thread.capturedExtractedConnections.begin(), thread.capturedExtractedConnections.end());
+        for (const auto& connection : thread.capturedExtractedConnections)
+            m_isotropicExtractedConnections.emplace_back(thread.island->worldPosition(connection.first),
+                thread.island->worldPosition(connection.second));
         m_isotropicExtractedConnectionMoved.resize(m_isotropicExtractedConnections.size()
                 - thread.capturedExtractedConnections.size(),
             0);
@@ -723,7 +773,7 @@ bool AutoRemesher::remesh()
         size_t vertexStartIndex = m_remeshedVertices.size();
         m_remeshedVertices.reserve(m_remeshedVertices.size() + vertices.size());
         for (const auto& it : vertices) {
-            m_remeshedVertices.push_back(it);
+            m_remeshedVertices.push_back(thread.island->worldPosition(it));
         }
         for (const auto& it : quads) {
             std::vector<size_t> quad;

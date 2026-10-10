@@ -78,6 +78,10 @@ install(TARGETS autoremesher-cli RUNTIME DESTINATION bin)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(coordinate-round-trip-test tests/coordinate_round_trip.cpp)
+    target_link_libraries(coordinate-round-trip-test PRIVATE autoremesher-core)
+    add_test(NAME coordinate-round-trip COMMAND coordinate-round-trip-test)
+
     add_executable(quadextractor-interpolation-test tests/quadextractor_interpolation.cpp)
     target_include_directories(quadextractor-interpolation-test PRIVATE ${TBB_INCLUDE_DIR})
     target_link_libraries(quadextractor-interpolation-test PRIVATE autoremesher-core)
