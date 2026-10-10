@@ -701,6 +701,14 @@ void QuadExtractor::extractConnections(std::vector<Vector3>* crossPoints,
     std::vector<size_t>* sourceTriangles,
     std::set<std::pair<size_t, size_t>>* connections)
 {
+    // Keep exact endpoints and constant coordinates in both position and UV space.
+    auto interpolate = [](const auto& from, const auto& to, double ratio) {
+        if (ratio == 0)
+            return from;
+        if (ratio == 1)
+            return to;
+        return from + (to - from) * ratio;
+    };
     std::map<PositionKey, size_t> crossPointMap;
 
     m_connectionInfos.clear();
@@ -795,8 +803,8 @@ void QuadExtractor::extractConnections(std::vector<Vector3>* crossPoints,
                                 continue;
                         }
                         CrossPoint point;
-                        point.position3 = (*m_vertices)[cornerIndices[fromIndex]] * (1 - ratio) + (*m_vertices)[cornerIndices[toIndex]] * ratio;
-                        point.position2 = cornerUvs[fromIndex] * (1 - ratio) + cornerUvs[toIndex] * ratio;
+                        point.position3 = interpolate((*m_vertices)[cornerIndices[fromIndex]], (*m_vertices)[cornerIndices[toIndex]], ratio);
+                        point.position2 = interpolate(cornerUvs[fromIndex], cornerUvs[toIndex], ratio);
                         point.integer = integer;
                         points[integer].push_back(point);
                     }
@@ -850,8 +858,8 @@ void QuadExtractor::extractConnections(std::vector<Vector3>* crossPoints,
                                 continue;
                             double ratio = (segmentPosition - fromPosition) / distance;
                             //std::cerr << "Split at ratio:" << ratio << std::endl;
-                            Vector3 position3 = segment[fromIndex].position3 * (1 - ratio) + segment[toIndex].position3 * ratio;
-                            Vector2 position2 = segment[fromIndex].position2 * (1 - ratio) + segment[toIndex].position2 * ratio;
+                            Vector3 position3 = interpolate(segment[fromIndex].position3, segment[toIndex].position3, ratio);
+                            Vector2 position2 = interpolate(segment[fromIndex].position2, segment[toIndex].position2, ratio);
                             int integer = segment[toIndex].integer;
                             CrossPoint newFromPoint;
                             newFromPoint.position3 = position3;

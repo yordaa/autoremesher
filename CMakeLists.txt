@@ -78,6 +78,11 @@ install(TARGETS autoremesher-cli RUNTIME DESTINATION bin)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(quadextractor-interpolation-test tests/quadextractor_interpolation.cpp)
+    target_include_directories(quadextractor-interpolation-test PRIVATE ${TBB_INCLUDE_DIR})
+    target_link_libraries(quadextractor-interpolation-test PRIVATE autoremesher-core)
+    add_test(NAME quadextractor-interpolation COMMAND quadextractor-interpolation-test)
+
     add_executable(quadextractor-hole-filling-test tests/quadextractor_hole_filling.cpp)
     target_link_libraries(quadextractor-hole-filling-test PRIVATE autoremesher-core)
     add_test(NAME quadextractor-hole-filling COMMAND quadextractor-hole-filling-test)
