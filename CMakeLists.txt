@@ -78,6 +78,10 @@ install(TARGETS autoremesher-cli RUNTIME DESTINATION bin)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(quadextractor-hole-filling-test tests/quadextractor_hole_filling.cpp)
+    target_link_libraries(quadextractor-hole-filling-test PRIVATE autoremesher-core)
+    add_test(NAME quadextractor-hole-filling COMMAND quadextractor-hole-filling-test)
+
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(
         NAME cli-black-box

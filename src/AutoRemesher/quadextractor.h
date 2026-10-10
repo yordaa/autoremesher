@@ -78,6 +78,8 @@ public:
     bool extract();
 
 private:
+    friend struct QuadExtractorHoleFillingTest;
+
     // The isoline a connection was cut from: which uv coordinate is held constant,
     // which integer value it is held at, and which triangle produced the segment.
     struct ConnectionInfo {
