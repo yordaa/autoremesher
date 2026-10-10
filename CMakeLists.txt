@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 cmake_policy(SET CMP0091 NEW)
-project(AutoRemesherCli LANGUAGES CXX)
+project(AutoRemesherCli VERSION 1.0.1 LANGUAGES CXX)
 
 if(WIN32)
     set(AUTOREMESHER_DEFAULT_USE_BUNDLED_TBB ON)
