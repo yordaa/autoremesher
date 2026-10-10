@@ -11,19 +11,19 @@ import unittest
 
 
 def mesh_metrics(path):
-    vertex_count = 0
+    vertices = []
     faces = []
     with path.open(encoding="utf-8") as stream:
         for line in stream:
             if line.startswith("v "):
-                vertex_count += 1
+                vertices.append(tuple(map(float, line.split()[1:4])))
             elif line.startswith("f "):
                 faces.append([int(value.split("/")[0]) - 1 for value in line.split()[1:]])
     edges = collections.Counter()
     adjacency = collections.defaultdict(set)
     used_vertices = set()
     for face in faces:
-        if len(face) < 3 or any(index < 0 or index >= vertex_count for index in face):
+        if len(face) < 3 or any(index < 0 or index >= len(vertices) for index in face):
             raise AssertionError("invalid output face")
         used_vertices.update(face)
         for index, first in enumerate(face):
@@ -42,6 +42,9 @@ def mesh_metrics(path):
                     unseen.remove(neighbor)
                     pending.append(neighbor)
     return {
+        "extent": [max(vertices[v][axis] for v in used_vertices)
+                   - min(vertices[v][axis] for v in used_vertices)
+                   for axis in range(3)] if used_vertices else [0.0, 0.0, 0.0],
         "faces": len(faces),
         "quads": sum(len(face) == 4 for face in faces),
         "boundaries": sum(count == 1 for count in edges.values()),
@@ -175,6 +178,25 @@ class CliBlackBoxTest(unittest.TestCase):
             self.assertIn("Fitting target topology", result.stdout)
             self.assertIn("RESULT ", result.stdout)
             self.assert_topology_preserved(source, output, result, "organic")
+
+    def test_coarse_icosahedron_preserves_fixture_extent(self):
+        # Fixture-specific regression bounds, not a universal surface-fit contract.
+        # Targets 18/20 used to collapse into a tiny patch despite closed topology.
+        source = pathlib.Path(__file__).parent / "fixtures" / "icosahedron.obj"
+        for target in ("18", "20"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory) / "output.obj"
+
+                result = self.run_cli(source, output, target_quads=target)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_topology_preserved(source, output, result, f"coarse-{target}")
+                input_extent = mesh_metrics(source)["extent"]
+                output_extent = mesh_metrics(output)["extent"]
+                ratios = [actual / expected for actual, expected in zip(output_extent, input_extent)]
+                print(f"SHAPE case=coarse-{target} extent_ratios={ratios}", flush=True)
+                for ratio in ratios:
+                    self.assertGreater(ratio, 0.5, "coarse fixture collapsed along an input axis")
 
     def test_closed_hard_surface_mesh_produces_valid_output(self):
         with tempfile.TemporaryDirectory() as directory:

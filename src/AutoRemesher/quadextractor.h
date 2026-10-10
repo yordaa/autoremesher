@@ -144,7 +144,6 @@ private:
     void splitSixEdgeFaces();
     void switchHighValenceEdges();
     void convertTriangleAndFiveEdgeFans();
-    void collapseThreeValenceDiagonals();
     void mergeDoubleSharedEdgeQuads();
     void mergeThreeAndFiveValenceTriangles();
     void collapseThreeValenceCorners();

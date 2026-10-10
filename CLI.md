@@ -62,7 +62,7 @@ Windows process-tree termination is abrupt and cannot run the CLI's in-process t
 
 ## Decision
 
-**Development candidate for EzDesign #903; do not promote into packaged EzDesign yet.** The older platform evidence above describes the original integration, not this source revision. The synchronized core still permits collapsed low-budget reconstructions and contains the duplicate hole-fill defect. EzDesign #892, #897, and the #891 stability/shape/platform gates must pass before dependency promotion. Rebuild and verify the final staged macOS arm64 and Windows x64 executables and their notices. The conservative size limits above remain until the production benchmark corpus justifies changing them.
+**Development candidate for EzDesign #903; do not promote into packaged EzDesign yet.** The older platform evidence above describes the original integration, not this source revision. This synchronization excludes the destructive three-valence diagonal-collapse pass and includes the merged #892 terminal-hole fix. Collapsed low-budget reconstructions remain unresolved. EzDesign #897 and the #891 stability/shape/platform gates, including staged verification of #892, must pass before dependency promotion. Rebuild and verify the final staged macOS arm64 and Windows x64 executables and their notices. The conservative size limits above remain until the production benchmark corpus justifies changing them.
 
 ## Compiled dependency closure
 
