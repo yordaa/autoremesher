@@ -1426,12 +1426,14 @@ void QuadExtractor::fixHoleWithQuads(std::vector<size_t>& hole, bool checkScore)
         if (3 == hole.size()) {
             m_remeshedPolygons.push_back({ (size_t)hole[2], (size_t)hole[1], (size_t)hole[0] });
             recordHalfEdgesOfLastPolygon();
+            hole.clear();
             return;
         }
 
         if (4 == hole.size()) {
             m_remeshedPolygons.push_back({ (size_t)hole[3], (size_t)hole[2], (size_t)hole[1], (size_t)hole[0] });
             recordHalfEdgesOfLastPolygon();
+            hole.clear();
             return;
         }
 
