@@ -1,4 +1,5 @@
 #include <AutoRemesher/AutoRemesher>
+#include <AutoRemesher/MeshSeparator>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -64,6 +65,31 @@ struct AutoRemesherOutputValidationTest {
             { 1, 2, 7, 6 }, { 2, 3, 8, 7 }, { 3, 4, 9, 8 }, { 4, 0, 5, 9 }
         };
         require(nullptr == AutoRemesher::validateOutputIsland(prism, prismFaces, true), "polygonal prism rejected");
+
+        // Subdividing an edge creates a valid two-neighbor cyclic vertex link.
+        auto subdividedVertices = vertices;
+        subdividedVertices.push_back((vertices[0] + vertices[1]) * 0.5);
+        auto subdividedFaces = faces;
+        subdividedFaces[0] = { 0, 3, 2, 1, 8 };
+        subdividedFaces[2] = { 0, 8, 1, 5, 4 };
+        require(nullptr == AutoRemesher::validateOutputIsland(subdividedVertices, subdividedFaces, true),
+            "valid valence-two edge subdivision rejected");
+
+        // Identifying opposite cube corners leaves paired edges and one global
+        // component, but joins two otherwise disjoint cyclic links at corner 0.
+        auto pinchedFaces = faces;
+        for (auto& face : pinchedFaces)
+            for (auto& index : face)
+                if (index == 6)
+                    index = 0;
+        require(AutoRemesher::hasClosedOrientedEdges(pinchedFaces), "pinched cube must retain paired edges");
+        std::vector<std::vector<std::vector<size_t>>> islands;
+        MeshSeparator::splitToIslands(pinchedFaces, islands);
+        require(islands.size() == 1, "pinched cube must retain one edge-connected island");
+        require(nullptr == AutoRemesher::validateOutputIsland(vertices, pinchedFaces, false),
+            "pinched fixture failed ordinary polygon validation or restricted the open-input path");
+        require(AutoRemesher::validateOutputIsland(vertices, pinchedFaces, true) != nullptr,
+            "two disconnected cyclic vertex links were accepted");
 
         auto badFaces = faces;
         badFaces.push_back({ 2, 1, 0, 3 });

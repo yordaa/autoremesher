@@ -357,6 +357,24 @@ const char* AutoRemesher::validateOutputIsland(const std::vector<Vector3>& verti
         MeshSeparator::splitToIslands(faces, islands);
         if (islands.size() != 1)
             return "input island split into multiple output components";
+
+        // Paired edges give each link neighbor one predecessor and successor.
+        // Every vertex link must be one cycle; two-neighbor cycles are valid.
+        std::map<size_t, std::map<size_t, size_t>> links;
+        for (const auto& face : faces)
+            for (size_t i = 0; i < face.size(); ++i)
+                links[face[i]][face[(i + face.size() - 1) % face.size()]] = face[(i + 1) % face.size()];
+        for (const auto& vertex : links) {
+            const auto& link = vertex.second;
+            const size_t first = link.begin()->first;
+            size_t neighbor = first, visited = 0;
+            do {
+                neighbor = link.at(neighbor);
+                ++visited;
+            } while (neighbor != first);
+            if (visited != link.size())
+                return "vertex link has multiple cycles";
+        }
     }
     return nullptr;
 }
