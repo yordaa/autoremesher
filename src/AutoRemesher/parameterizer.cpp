@@ -19,6 +19,7 @@
  *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  *  SOFTWARE.
  */
+#include <AutoRemesher/ConstrainedLeastSquares>
 #include <AutoRemesher/FrameField>
 #include <AutoRemesher/Parameterizer>
 #include <AutoRemesher/QuadParameterizer>
@@ -37,6 +38,104 @@
 namespace AutoRemesher {
 
 namespace {
+
+    std::vector<double> computeConformalScaling(const SurfaceMesh& mesh,
+        const std::vector<int>& vertexCharges,
+        const std::vector<double>& desiredFaceScaling,
+        double fitting)
+    {
+        const size_t vertexCount = mesh.vertexCount(), faceCount = mesh.faceCount();
+        std::vector<double> cotanWeight(mesh.cornerCount(), 0.0);
+        std::vector<double> angleSum(vertexCount, 0.0), faceArea(faceCount, 0.0);
+        std::vector<char> onBoundary(vertexCount, 0);
+        for (size_t f = 0; f < faceCount; ++f) {
+            for (size_t l = 0; l < 3; ++l) {
+                const size_t c = 3 * f + l;
+                const Vector3 first = mesh.edgeVector(c);
+                const Vector3 second = -mesh.edgeVector(mesh.previousCorner(c));
+                const double cross = Vector3::crossProduct(first, second).length();
+                const double dot = Vector3::dotProduct(first, second);
+                angleSum[mesh.cornerVertex(c)] += std::atan2(cross, dot);
+                if (cross > 1e-20)
+                    cotanWeight[mesh.nextCorner(c)] = .5 * dot / cross;
+                faceArea[f] += cross / 6.0;
+                if (mesh.oppositeCorner(c) == SurfaceMesh::npos) {
+                    onBoundary[mesh.cornerVertex(c)] = 1;
+                    onBoundary[mesh.cornerVertex(mesh.nextCorner(c))] = 1;
+                }
+            }
+        }
+
+        std::vector<double> desiredVertexScaling(vertexCount, 0.0), vertexWeight(vertexCount, 0.0);
+        for (size_t f = 0; f < faceCount; ++f) {
+            const double logScaling = std::log(std::max(1e-6, desiredFaceScaling[f]));
+            for (size_t l = 0; l < 3; ++l) {
+                const size_t v = mesh.cornerVertex(3 * f + l);
+                desiredVertexScaling[v] += faceArea[f] * logScaling;
+                vertexWeight[v] += faceArea[f];
+            }
+        }
+        for (size_t v = 0; v < vertexCount; ++v)
+            desiredVertexScaling[v] = vertexWeight[v] > 0 ? desiredVertexScaling[v] / vertexWeight[v] : 0.0;
+
+        std::vector<double> deficit(vertexCount, 0.0);
+        for (size_t v = 0; v < vertexCount; ++v) {
+            const double gaussian = (onBoundary[v] ? M_PI : 2.0 * M_PI) - angleSum[v];
+            const int charge = v < vertexCharges.size() ? vertexCharges[v] : 0;
+            const double cone = .5 * M_PI * double(charge > 2 ? charge - 4 : charge);
+            deficit[v] = gaussian - cone;
+        }
+
+        ConstrainedLeastSquares system(vertexCount);
+        std::vector<std::pair<size_t, double>> row;
+        for (size_t v = 0; v < vertexCount; ++v) {
+            if (onBoundary[v] || vertexWeight[v] <= 0.0)
+                continue;
+            row.clear();
+            double diagonal = 0.0;
+            for (const size_t c : mesh.cornersAroundVertex(v)) {
+                const size_t opposite = mesh.oppositeCorner(c);
+                if (opposite == SurfaceMesh::npos)
+                    continue;
+                const double weight = cotanWeight[c] + cotanWeight[opposite];
+                if (0.0 == weight)
+                    continue;
+                row.push_back({ mesh.cornerVertex(mesh.nextCorner(c)), -weight });
+                diagonal += weight;
+            }
+            if (row.empty())
+                continue;
+            row.push_back({ v, diagonal });
+            system.addEnergy(row, deficit[v], 1.0);
+        }
+        for (size_t v = 0; v < vertexCount; ++v)
+            system.addEnergy({ { v, 1.0 } }, desiredVertexScaling[v], fitting);
+
+        std::vector<double> logScaling;
+        if (!system.solve(&logScaling) || logScaling.size() != vertexCount)
+            return desiredFaceScaling;
+
+        std::vector<double> result(faceCount, 1.0);
+        for (size_t f = 0; f < faceCount; ++f) {
+            double total = 0.0;
+            for (size_t l = 0; l < 3; ++l)
+                total += logScaling[mesh.cornerVertex(3 * f + l)];
+            result[f] = total / 3.0;
+        }
+        double solvedDensity = 0.0, desiredDensity = 0.0;
+        for (size_t f = 0; f < faceCount; ++f) {
+            solvedDensity += faceArea[f] * std::exp(-2.0 * result[f]);
+            desiredDensity += faceArea[f] / (desiredFaceScaling[f] * desiredFaceScaling[f]);
+        }
+        if (solvedDensity > 0.0 && desiredDensity > 0.0) {
+            const double shift = .5 * std::log(solvedDensity / desiredDensity);
+            for (double& value : result)
+                value -= shift;
+        }
+        for (double& value : result)
+            value = std::max(.2, std::min(5.0, std::exp(value)));
+        return result;
+    }
 
     inline double quadraticForm(const double* T, const Vector3& t)
     {
@@ -124,7 +223,7 @@ namespace {
 std::vector<double> Parameterizer::computeFaceScalingField(const std::vector<Vector3>& vertices,
     const std::vector<std::vector<size_t>>& triangles,
     const std::vector<Vector3>& vertexNormals,
-    const std::map<size_t, std::vector<size_t>>& faceAroundVertexMap) const
+    const std::vector<std::vector<size_t>>& faceAroundVertexMap) const
 {
     std::vector<double> faceScaling(triangles.size(), 1.0);
     if (m_adaptivity <= 0.0 || vertices.empty())
@@ -134,12 +233,12 @@ std::vector<double> Parameterizer::computeFaceScalingField(const std::vector<Vec
     tbb::parallel_for(tbb::blocked_range<size_t>(0, vertices.size()),
         [&](const tbb::blocked_range<size_t>& range) {
             for (size_t v = range.begin(); v != range.end(); ++v) {
-                auto findFaces = faceAroundVertexMap.find(v);
-                if (findFaces == faceAroundVertexMap.end())
+                const auto& facesAroundVertex = faceAroundVertexMap[v];
+                if (facesAroundVertex.empty())
                     continue;
                 const auto& normalV = vertexNormals[v];
                 double maxCurvature = 0.0;
-                for (const auto& faceIndex : findFaces->second) {
+                for (const auto& faceIndex : facesAroundVertex) {
                     for (const auto& u : triangles[faceIndex]) {
                         if (u == v)
                             continue;
@@ -209,6 +308,15 @@ bool Parameterizer::parameterize()
     }
 #endif
 
+    // The fractions below are the measured share of parameterization each step
+    // costs; "Solving quad cover" dominates, so the bar has to keep moving
+    // through it rather than sitting still until it finishes.
+    const auto report = [this](float fraction, const char* name) {
+        if (m_progressHandler)
+            m_progressHandler(fraction, name);
+    };
+
+    report(0.0f, "Computing vertex normals");
     std::vector<Vector3> vertexNormals(m_vertices->size());
     {
         std::vector<Vector3> faceNormals(m_triangles->size());
@@ -233,7 +341,8 @@ bool Parameterizer::parameterize()
             });
     }
 
-    std::map<size_t, std::vector<size_t>> faceAroundVertexMap;
+    report(0.01f, "Computing scaling field");
+    std::vector<std::vector<size_t>> faceAroundVertexMap(m_vertices->size());
     for (size_t i = 0; i < m_triangles->size(); ++i) {
         const auto& it = (*m_triangles)[i];
         faceAroundVertexMap[it[0]].push_back(i);
@@ -244,6 +353,7 @@ bool Parameterizer::parameterize()
     std::vector<double> faceScalingField = computeFaceScalingField(*m_vertices,
         *m_triangles, vertexNormals, faceAroundVertexMap);
 
+    report(0.02f, "Building surface topology");
     // The parameterization pipeline uses the triangle/corner mesh;
     // no attribute-backed interchange mesh is constructed.
     SurfaceMesh topology(*m_vertices, *m_triangles);
@@ -252,6 +362,7 @@ bool Parameterizer::parameterize()
         return false;
     }
 
+    report(0.03f, "Solving frame field");
     // Topology, field, and quad cover form the complete active path.
     std::vector<Vector3> field;
     if (nullptr != m_triangleFieldVectors) {
@@ -268,27 +379,41 @@ bool Parameterizer::parameterize()
 
     SingularitySimplifier simplifier(topology, &field);
     if (m_singularitySimplification) {
+        report(0.17f, "Simplifying singularities");
         simplifier.setSharpEdgeDegrees(m_sharpEdgeDegrees);
         simplifier.setMaximumPairDistance(m_maximumSingularityPairDistance);
         simplifier.simplify();
     }
 
+    //faceScalingField = computeConformalScaling(topology, simplifier.vertexCharges(),
+    //    faceScalingField, std::max(1e-4, .05 * m_adaptivity));
+
     std::vector<double> faceScalingU(m_triangles->size(), 1.0);
     std::vector<double> faceScalingV(m_triangles->size(), 1.0);
     if (m_anisotropy > 0.0) {
+        report(0.26f, "Computing anisotropy field");
         computeFaceAnisotropyField(topology, field,
             m_anisotropy, m_maxAspectRatio, &faceScalingU, &faceScalingV);
+    }
+    // The cover solve is the longest single step here, so it reports its own
+    // sub-steps from 0.28 onwards rather than going quiet until it finishes.
+    ProgressHandler coverProgress;
+    if (m_progressHandler) {
+        coverProgress = [this](float fraction, const char* name) {
+            m_progressHandler(0.28f + (0.99f - 0.28f) * fraction, name);
+        };
     }
     QuadParameterizer::Result cover;
     if (!QuadParameterizer::parameterize(*m_vertices, *m_triangles,
             &field, m_scaling, m_sharpEdgeDegrees, &cover,
-            &faceScalingField, &faceScalingU, &faceScalingV)) {
+            &faceScalingField, &faceScalingU, &faceScalingV,
+            coverProgress ? &coverProgress : nullptr)) {
         std::cerr << "Quad cover solve failed" << std::endl;
         return false;
     }
+    report(0.99f, "Collecting singularities");
     m_originalTriangleUvs = cover.triangleUvs;
-    delete m_triangleUvs;
-    m_triangleUvs = new std::vector<std::vector<Vector2>>(cover.triangleUvs);
+    m_triangleUvs = std::make_unique<std::vector<std::vector<Vector2>>>(cover.triangleUvs);
     m_singularVertexPositions.clear();
     m_singularVertexIndices.clear();
     for (const size_t v : cover.singularVertices) {
@@ -304,6 +429,7 @@ bool Parameterizer::parameterize()
                   << simplifier.cancelledPairCount() << " pair(s) cancelled)"
                   << std::endl;
     }
+    report(1.0f, "");
     return true;
 }
 

@@ -82,12 +82,14 @@ jobs:
           Copy-Item $exe "$package/autoremesher-cli.exe"
           Copy-Item LICENSE "$package/LICENSE-AutoRemesher.txt"
           Copy-Item thirdparty/isotropicremesher/LICENSE "$package/LICENSE-isotropicremesher.txt"
+          Copy-Item thirdparty/meshoptimizer/LICENSE.md "$package/LICENSE-meshoptimizer.txt"
           Copy-Item thirdparty/tbb/LICENSE "$package/LICENSE-TBB.txt"
           Copy-Item thirdparty/eigen/COPYING.* $package
           Get-Content src/tiny_obj_loader.h -TotalCount 24 | Set-Content "$package/LICENSE-tinyobjloader.txt"
           @(
             "AutoRemesher core and CLI: MIT"
             "isotropicremesher: MIT"
+            "meshoptimizer 1.2 vendored subset: MIT"
             "Intel TBB 2017.0: Apache-2.0"
             "Eigen 5.0.1 with EIGEN_MPL2_ONLY: MPL-2.0 and bundled compatible notices"
             "tinyobjloader: MIT"

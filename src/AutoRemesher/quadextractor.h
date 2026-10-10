@@ -19,6 +19,7 @@
  */
 #ifndef AUTO_REMESHER_QUAD_EXTRACTOR_H
 #define AUTO_REMESHER_QUAD_EXTRACTOR_H
+#include <AutoRemesher/Progress>
 #include <AutoRemesher/Vector2>
 #include <AutoRemesher/Vector3>
 #include <cstdint>
@@ -68,6 +69,11 @@ public:
         m_singularVertices = singularVertices;
     }
 
+    void setProgressHandler(ProgressHandler progressHandler)
+    {
+        m_progressHandler = std::move(progressHandler);
+    }
+
     // Per connection of extractedConnections(): 0 untouched, 1 on a triangle whose uv
     // was repaired, 2 added by holdSingularLines(). Drives the [Param] preview color.
     const std::vector<uint8_t>& extractedConnectionMoved() const
@@ -97,10 +103,9 @@ private:
     std::vector<uint8_t> m_extractedConnectionMoved;
     const std::vector<std::vector<Vector2>>* m_originalTriangleUvs = nullptr;
     const std::vector<size_t>* m_singularVertices = nullptr;
+    ProgressHandler m_progressHandler;
     std::map<std::pair<size_t, size_t>, ConnectionInfo> m_connectionInfos;
     std::set<std::pair<size_t, size_t>> m_addedConnections;
-    // Points simplifyGraph() must leave alone, see holdSingularLines()
-    std::unordered_set<size_t> m_pinnedPoints;
     std::set<std::pair<size_t, size_t>> m_halfEdges;
 
     void extractConnections(std::vector<Vector3>* crossPoints,
@@ -132,6 +137,24 @@ private:
         const std::vector<size_t>& triangle,
         const std::vector<size_t>& testPoints);
     bool removeIsolatedFaces();
+    void smoothAndProject(size_t iterations,
+        const std::unordered_set<size_t>* movableVertices = nullptr);
+    void smoothAroundVertices(const std::unordered_set<size_t>& seedVertices,
+        size_t rings, size_t iterations);
+    void splitSixEdgeFaces();
+    void switchHighValenceEdges();
+    void convertTriangleAndFiveEdgeFans();
+    void collapseThreeValenceDiagonals();
+    void mergeDoubleSharedEdgeQuads();
+    void mergeThreeAndFiveValenceTriangles();
+    void collapseThreeValenceCorners();
+    void splitHighValenceTriangleFans();
+    void collapseThreeValenceEdgePairs();
+    void cleanupTriangles();
+    void splitSevenEdgeFaces();
+    // Merges one edge per pass over the whole polygon set, so it reports from
+    // inside its round loop instead of running silently to completion.
+    void mergeSharedFiveEdgeFaces(const ProgressHandler* progressHandler = nullptr);
     bool removeNonManifoldFaces();
     void rebuildHalfEdges();
     void fixHoles();

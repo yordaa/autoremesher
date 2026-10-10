@@ -1,6 +1,6 @@
 # Qt-free CLI
 
-The `autoremesher-cli` target runs the remeshing core without Qt. Its pinned upstream base is `5d631db45107378c6852289bd013cbbb1b9322ab`.
+The `autoremesher-cli` target runs the remeshing core without Qt. Its core is synchronized from upstream `4a49f82f720f647691c09a7d8a16fa63be208aad`, while retaining the fork's input validation, complete-island failure contract, CLI, and CMake build. GUI and Qt release changes are excluded.
 
 ## Build on macOS arm64
 
@@ -28,7 +28,7 @@ Input must be a non-empty, closed, consistently oriented manifold triangle OBJ. 
 Stdout contains flushed progress and one final result line:
 
 ```text
-PROGRESS 30 Fitting target topology...
+PROGRESS 18 Fitting target topology...
 RESULT vertices=100 faces=98 quads=98 non_quads=0 elapsed_ms=11
 ```
 
@@ -62,7 +62,7 @@ Windows process-tree termination is abrupt and cannot run the CLI's in-process t
 
 ## Decision
 
-**GO to EzDesign integration (#731), but do not ship yet.** macOS arm64 and Windows x64 now prove the external executable boundary, honest progress, process cancellation, bounded concurrency, output validation, and a commercially usable compiled dependency closure. Packaging and signing inside EzDesign remain the release gate. The conservative size limits above remain until the production benchmark corpus justifies changing them.
+**Development candidate for EzDesign #903; do not promote into packaged EzDesign yet.** The older platform evidence above describes the original integration, not this source revision. The synchronized core still permits collapsed low-budget reconstructions and contains the duplicate hole-fill defect. EzDesign #892, #897, and the #891 stability/shape/platform gates must pass before dependency promotion. Rebuild and verify the final staged macOS arm64 and Windows x64 executables and their notices. The conservative size limits above remain until the production benchmark corpus justifies changing them.
 
 ## Compiled dependency closure
 
@@ -70,6 +70,7 @@ Windows process-tree termination is abrupt and cannot run the CLI's in-process t
 | --- | --- | --- |
 | AutoRemesher core and CLI | pinned repository revision above | [`LICENSE`](LICENSE), MIT |
 | isotropicremesher | bundled source at this revision | [`thirdparty/isotropicremesher/LICENSE`](thirdparty/isotropicremesher/LICENSE), MIT |
+| meshoptimizer | bundled subset 1.2 (`indexgenerator.cpp`, `simplifier.cpp`) | [`thirdparty/meshoptimizer/LICENSE.md`](thirdparty/meshoptimizer/LICENSE.md), MIT |
 | Eigen | bundled 5.0.1, built with `EIGEN_MPL2_ONLY` | [`thirdparty/eigen/COPYING.README`](thirdparty/eigen/COPYING.README) and `COPYING.MPL2` |
 | TBB | CMake package on macOS; bundled 2017.0 by default on Windows | [`thirdparty/tbb/LICENSE`](thirdparty/tbb/LICENSE), Apache-2.0 |
 | tinyobjloader | bundled header used by the CLI | MIT notice at the top of [`src/tiny_obj_loader.h`](src/tiny_obj_loader.h) |

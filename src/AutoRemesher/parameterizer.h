@@ -19,9 +19,12 @@
  */
 #ifndef AUTO_REMESHER_PARAMETERIZER_H
 #define AUTO_REMESHER_PARAMETERIZER_H
+#include <AutoRemesher/Progress>
 #include <AutoRemesher/Vector2>
 #include <AutoRemesher/Vector3>
 #include <map>
+#include <memory>
+#include <utility>
 #include <vector>
 
 namespace AutoRemesher {
@@ -37,21 +40,14 @@ public:
     {
     }
 
-    ~Parameterizer()
+    std::unique_ptr<std::vector<std::vector<Vector2>>> takeTriangleUvs()
     {
-        delete m_triangleUvs;
+        return std::move(m_triangleUvs);
     }
 
     const std::vector<std::vector<Vector2>>& originalTriangleUvs() const
     {
         return m_originalTriangleUvs;
-    }
-
-    std::vector<std::vector<Vector2>>* takeTriangleUvs()
-    {
-        std::vector<std::vector<Vector2>>* triangleUvs = m_triangleUvs;
-        m_triangleUvs = nullptr;
-        return triangleUvs;
     }
 
     const std::vector<Vector3>& singularVertexPositions() const
@@ -94,13 +90,18 @@ public:
         m_maximumSingularityPairDistance = faceHops;
     }
 
+    void setProgressHandler(ProgressHandler progressHandler)
+    {
+        m_progressHandler = std::move(progressHandler);
+    }
+
     bool parameterize();
 
 private:
     const std::vector<Vector3>* m_vertices = nullptr;
     const std::vector<std::vector<size_t>>* m_triangles = nullptr;
     const std::vector<Vector3>* m_triangleFieldVectors = nullptr;
-    std::vector<std::vector<Vector2>>* m_triangleUvs = nullptr;
+    std::unique_ptr<std::vector<std::vector<Vector2>>> m_triangleUvs;
     std::vector<Vector3> m_singularVertexPositions;
     std::vector<size_t> m_singularVertexIndices;
     std::vector<std::vector<Vector2>> m_originalTriangleUvs;
@@ -111,11 +112,12 @@ private:
     double m_maxAspectRatio = 2.3;
     bool m_singularitySimplification = true;
     size_t m_maximumSingularityPairDistance = 6;
+    ProgressHandler m_progressHandler;
 
     std::vector<double> computeFaceScalingField(const std::vector<Vector3>& vertices,
         const std::vector<std::vector<size_t>>& triangles,
         const std::vector<Vector3>& vertexNormals,
-        const std::map<size_t, std::vector<size_t>>& faceAroundVertexMap) const;
+        const std::vector<std::vector<size_t>>& faceAroundVertexMap) const;
 };
 
 }

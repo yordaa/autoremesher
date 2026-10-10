@@ -19,6 +19,7 @@
  *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  *  SOFTWARE.
  */
+#include <AutoRemesher/ConstrainedLeastSquares>
 #include <AutoRemesher/MixedIntegerLeastSquares>
 #include <AutoRemesher/QuadParameterizer>
 #include <AutoRemesher/SurfaceMesh>
@@ -256,6 +257,121 @@ namespace {
         }
     }
 
+    const double quarterTurn[4][2][2] = {
+        { { 1, 0 }, { 0, 1 } },
+        { { 0, 1 }, { -1, 0 } },
+        { { -1, 0 }, { 0, -1 } },
+        { { 0, -1 }, { 1, 0 } }
+    };
+
+    void applyCurlCorrection(const SurfaceMesh& mesh, const std::vector<Vector3>& normals,
+        const std::vector<int>& rotation, const std::vector<signed char>& cornerConstraints,
+        const std::vector<double>* faceScaling, double scale, double regularization,
+        std::vector<double>* scalingU, std::vector<double>* scalingV,
+        std::vector<Vector3>* field)
+    {
+        const size_t faceCount = mesh.faceCount();
+        const bool hasFaceScaling = faceScaling && faceScaling->size() == faceCount;
+        std::vector<double> su(faceCount), sv(faceCount);
+        std::vector<Vector3> perpendicular(faceCount);
+        for (size_t f = 0; f < faceCount; ++f) {
+            const double faceScale = hasFaceScaling ? std::max(1e-12, (*faceScaling)[f]) : 1.0;
+            su[f] = scale * faceScale * std::max(1e-12, (*scalingU)[f]);
+            sv[f] = scale * faceScale * std::max(1e-12, (*scalingV)[f]);
+            perpendicular[f] = unit(Vector3::crossProduct(normals[f], (*field)[f]),
+                mesh.edgeVector(3 * f));
+        }
+
+        std::vector<char> anchored(faceCount, 0);
+        for (size_t c = 0; c < mesh.cornerCount(); ++c)
+            if (cornerConstraints[c] != ConstraintNone)
+                anchored[mesh.cornerFace(c)] = 1;
+
+        const auto request = [&](size_t corner, size_t face, double* constant,
+                                 double* turnGradient, double* alongGradient, double* acrossGradient) {
+            const Vector3 e = mesh.edgeVector(corner);
+            const double along = Vector3::dotProduct((*field)[face], e);
+            const double across = Vector3::dotProduct(perpendicular[face], e);
+            constant[0] = along / su[face];
+            constant[1] = across / sv[face];
+            turnGradient[0] = across / su[face];
+            turnGradient[1] = -along / sv[face];
+            alongGradient[0] = -along / su[face];
+            alongGradient[1] = 0.0;
+            acrossGradient[0] = 0.0;
+            acrossGradient[1] = -across / sv[face];
+        };
+
+        ConstrainedLeastSquares system(3 * faceCount);
+        size_t edgeCount = 0;
+        for (size_t c = 0; c < mesh.cornerCount(); ++c) {
+            const size_t oc = mesh.oppositeCorner(c);
+            if (oc == SurfaceMesh::npos || oc < c)
+                continue;
+            const size_t f = mesh.cornerFace(c), g = mesh.cornerFace(oc);
+            const int r = (rotation[c] % 4 + 4) % 4;
+            double here[2], hereTurn[2], hereAlong[2], hereAcross[2];
+            double across[2], acrossTurn[2], acrossAlong[2], acrossAcross[2];
+            request(c, f, here, hereTurn, hereAlong, hereAcross);
+            request(oc, g, across, acrossTurn, acrossAlong, acrossAcross);
+            const auto turned = [&](const double* value, size_t k) {
+                return quarterTurn[r][k][0] * value[0] + quarterTurn[r][k][1] * value[1];
+            };
+            for (size_t k = 0; k < 2; ++k) {
+                const double residual = here[k] + turned(across, k);
+                system.addEnergy({ { 3 * f, hereTurn[k] },
+                                     { 3 * f + 1, hereAlong[k] },
+                                     { 3 * f + 2, hereAcross[k] },
+                                     { 3 * g, turned(acrossTurn, k) },
+                                     { 3 * g + 1, turned(acrossAlong, k) },
+                                     { 3 * g + 2, turned(acrossAcross, k) } },
+                    -residual, 1.0);
+            }
+            ++edgeCount;
+        }
+        if (0 == edgeCount)
+            return;
+        for (size_t f = 0; f < faceCount; ++f) {
+            if (anchored[f])
+                system.addConstraint({ { 3 * f, 1.0 } }, 0.0);
+            else
+                system.addEnergy({ { 3 * f, 1.0 } }, 0.0, regularization);
+            system.addEnergy({ { 3 * f + 1, 1.0 } }, 0.0, regularization);
+            system.addEnergy({ { 3 * f + 2, 1.0 } }, 0.0, regularization);
+        }
+
+        std::vector<double> correction;
+        if (!system.solve(&correction) || correction.size() != 3 * faceCount)
+            return;
+
+        const double limit = .3, scaleLimit = std::log(1.5);
+        for (size_t f = 0; f < faceCount; ++f) {
+            const double angle = std::max(-limit, std::min(limit, correction[3 * f]));
+            (*field)[f] = unit(std::cos(angle) * (*field)[f] + std::sin(angle) * perpendicular[f],
+                (*field)[f]);
+            (*scalingU)[f] *= std::exp(std::max(-scaleLimit, std::min(scaleLimit, correction[3 * f + 1])));
+            (*scalingV)[f] *= std::exp(std::max(-scaleLimit, std::min(scaleLimit, correction[3 * f + 2])));
+        }
+        double areaBefore = 0.0, areaAfter = 0.0;
+        for (size_t f = 0; f < faceCount; ++f) {
+            const double faceScale = hasFaceScaling ? std::max(1e-12, (*faceScaling)[f]) : 1.0;
+            const double area = Vector3::crossProduct(mesh.edgeVector(3 * f),
+                -mesh.edgeVector(3 * f + 2))
+                                    .length();
+            areaBefore += area / (su[f] * sv[f]);
+            su[f] = scale * faceScale * std::max(1e-12, (*scalingU)[f]);
+            sv[f] = scale * faceScale * std::max(1e-12, (*scalingV)[f]);
+            areaAfter += area / (su[f] * sv[f]);
+        }
+        if (areaBefore > 0.0 && areaAfter > 0.0) {
+            const double factor = std::sqrt(areaAfter / areaBefore);
+            for (size_t f = 0; f < faceCount; ++f) {
+                (*scalingU)[f] *= factor;
+                (*scalingV)[f] *= factor;
+            }
+        }
+    }
+
     std::vector<char> computeSeam(const SurfaceMesh& mesh, const std::vector<int>& rotation)
     {
         const size_t corners = mesh.cornerCount();
@@ -328,7 +444,8 @@ namespace {
         }
     }
 
-    bool solveQuadCover(const CoverContext& ctx, std::vector<double>* values)
+    bool solveQuadCover(const CoverContext& ctx, std::vector<double>* values,
+        const ProgressHandler* progressHandler)
     {
         const SurfaceMesh& mesh = ctx.mesh;
         const std::vector<Vector3>& field = ctx.field;
@@ -343,6 +460,11 @@ namespace {
         const size_t corners = mesh.cornerCount();
         const size_t uvVariables = 2 * corners;
         const size_t variables = 2 * uvVariables;
+        const auto report = [progressHandler](float fraction, const char* name) {
+            if (nullptr != progressHandler && *progressHandler)
+                (*progressHandler)(fraction, name);
+        };
+        report(0.0f, "Building cover system");
         MixedIntegerLeastSquares s(variables);
         for (size_t t = 0; t < 2 * corners; ++t)
             s.setVariablePeriod(uvVariables + t, 2);
@@ -463,13 +585,22 @@ namespace {
                 s.addConstraint(2 * c, 1, 2 * n, -1);
             }
         }
+        report(0.2f, "Eliminating cover constraints");
         s.finalizeConstraints();
-        for (size_t iteration = 0; iteration < 100; ++iteration) {
+        // Rounding usually converges after a couple of passes, well short of the
+        // cap, so spread the fraction over the passes it is expected to take and
+        // clamp instead of pacing it against the cap and barely moving.
+        const size_t maximumIterations = 100;
+        const size_t expectedIterations = 4;
+        for (size_t iteration = 0; iteration < maximumIterations; ++iteration) {
+            report(0.3f + 0.65f * std::min(1.0f, (float)iteration / expectedIterations),
+                "Rounding cover to integers");
             if (!s.solveIteration())
                 return false;
             if (s.converged())
                 break;
         }
+        report(0.98f, "Rounding cover to integers");
         values->resize(variables);
         for (size_t i = 0; i < variables; ++i)
             (*values)[i] = s.value(i);
@@ -483,7 +614,7 @@ namespace {
         std::vector<double> uv(allValues.begin(), allValues.begin() + uvVariables);
         for (double& coordinate : uv) {
             const double integer = std::round(coordinate);
-            if (std::fabs(coordinate - integer) < 0.05)
+            if (std::fabs(coordinate - integer) < 0.01)
                 coordinate = integer;
         }
         result->singularVertices.clear();
@@ -515,10 +646,17 @@ bool QuadParameterizer::parameterize(const std::vector<Vector3>& vertices,
     double hardEdgeDegrees, Result* result,
     const std::vector<double>* faceScaling,
     const std::vector<double>* faceScalingU,
-    const std::vector<double>* faceScalingV)
+    const std::vector<double>* faceScalingV,
+    const ProgressHandler* progressHandler)
 {
+    const auto report = [progressHandler](float fraction, const char* name) {
+        if (nullptr != progressHandler && *progressHandler)
+            (*progressHandler)(fraction, name);
+    };
+
     if (vertices.empty() || triangles.empty() || scaling <= 0.0)
         return false;
+    report(0.0f, "Initializing cover field");
     SurfaceMesh mesh(vertices, triangles);
     if (mesh.faceCount() != triangles.size())
         return false;
@@ -538,10 +676,12 @@ bool QuadParameterizer::parameterize(const std::vector<Vector3>& vertices,
         activeScalingV = *faceScalingV;
     }
 
+    report(0.04f, "Smoothing cross field");
     if (!(guidance && guidance->size() == mesh.faceCount()))
         smoothCrossField(mesh, normals, hardEdgeDegrees, &result->field);
     brushFieldAlongSpanningTree(mesh, normals, &result->field);
 
+    report(0.14f, "Computing corner rotations");
     const std::vector<int> rotation = computeCornerRotations(mesh, result->field, normals);
     result->cornerRotations = rotation;
     const std::vector<signed char> cornerConstraints = computeCornerConstraints(mesh, result->field,
@@ -549,15 +689,27 @@ bool QuadParameterizer::parameterize(const std::vector<Vector3>& vertices,
     if (trackDirectionalScale)
         applyDirectionalSwaps(mesh, fieldBeforeBrush, result->field, normals,
             &activeScalingU, &activeScalingV);
+    report(0.20f, "Correcting field curl");
+    applyCurlCorrection(mesh, normals, rotation, cornerConstraints,
+        faceScaling, scale, 1e-4, &activeScalingU, &activeScalingV, &result->field);
     const std::vector<char> seam = computeSeam(mesh, rotation);
 
     const CoverContext ctx { mesh, result->field, normals, rotation, seam, cornerConstraints,
         activeScalingU, activeScalingV, faceScaling, scale };
 
+    // The cover solve reports on its own 0..1, so remap it into the tail of this
+    // function's range and keep the fractions monotonic end to end.
+    ProgressHandler coverProgress;
+    if (nullptr != progressHandler && *progressHandler) {
+        coverProgress = [progressHandler](float fraction, const char* name) {
+            (*progressHandler)(0.35f + 0.63f * fraction, name);
+        };
+    }
     std::vector<double> allValues;
-    if (!solveQuadCover(ctx, &allValues))
+    if (!solveQuadCover(ctx, &allValues, coverProgress ? &coverProgress : nullptr))
         return false;
 
+    report(0.99f, "Building cover uvs");
     buildResultUv(mesh, rotation, allValues, uvVariables, result);
     return true;
 }

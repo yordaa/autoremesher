@@ -90,6 +90,10 @@ class CliBlackBoxTest(unittest.TestCase):
         self.assertEqual(output_metrics["non_manifold"], 0)
         self.assertIn(f"faces={output_metrics['faces']}", result.stdout)
         self.assertIn(f"quads={output_metrics['quads']}", result.stdout)
+        progress = [int(value) for value in re.findall(r"^PROGRESS (\d+) ", result.stdout, re.MULTILINE)]
+        self.assertTrue(progress)
+        self.assertEqual(progress, sorted(progress))
+        self.assertEqual(progress[-1], 100)
         quad_percentage = 100 * output_metrics["quads"] / output_metrics["faces"]
         print(
             f"TOPOLOGY case={measured_case} faces={output_metrics['faces']} "
@@ -230,6 +234,35 @@ f 1 2 3
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("closed oriented manifold", result.stderr)
             self.assertFalse(output.exists())
+
+    def test_disconnected_parts_are_all_preserved_or_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "unequal-islands.obj"
+            output = root / "output.obj"
+            fixture = (pathlib.Path(__file__).parent / "fixtures" / "icosahedron.obj").read_text(
+                encoding="utf-8"
+            )
+            vertex_count = sum(line.startswith("v ") for line in fixture.splitlines())
+            lines = fixture.splitlines()
+            for line in fixture.splitlines():
+                values = line.split()
+                if values and values[0] == "v":
+                    x, y, z = (float(value) * 0.01 for value in values[1:])
+                    lines.append(f"v {x + 4} {y} {z}")
+                elif values and values[0] == "f":
+                    lines.append("f " + " ".join(str(int(value) + vertex_count) for value in values[1:]))
+            source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = self.run_cli(source, output, target_quads="100")
+
+            if result.returncode == 0:
+                self.assert_topology_preserved(source, output, result, "unequal-islands")
+            else:
+                self.assertEqual(result.returncode, 4)
+                self.assertNotIn("RESULT ", result.stdout)
+                self.assertFalse(output.exists())
+                self.assertEqual(list(root.glob("output.obj.tmp-*")), [])
 
     def test_non_triangle_input_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

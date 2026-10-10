@@ -21,11 +21,15 @@
  */
 #ifndef AUTO_REMESHER_AUTO_REMESHER_H
 #define AUTO_REMESHER_AUTO_REMESHER_H
+#include <AutoRemesher/Progress>
 #include <AutoRemesher/Vector3>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -104,6 +108,21 @@ public:
         return m_remeshedQuads;
     }
 
+    const std::vector<Vector3>& decimatedVertices()
+    {
+        return m_decimatedVertices;
+    }
+
+    const std::vector<std::vector<size_t>>& decimatedTriangles()
+    {
+        return m_decimatedTriangles;
+    }
+
+    bool decimated()
+    {
+        return m_decimated;
+    }
+
     const std::vector<Vector3>& isotropicVertices()
     {
         return m_isotropicVertices;
@@ -141,15 +160,50 @@ public:
 
     bool remesh();
 
-    void updateProgress(size_t threadIndex, float progress);
+    // `progress` is how far island `threadIndex` has got, 0..1.  `status` names
+    // the step it is on, or nullptr to keep the island's current one.  Called
+    // from the island worker threads.
+    void updateProgress(size_t threadIndex, float progress, const char* status = nullptr);
+
+    // Records how long a named pipeline step took, summed over the islands that
+    // ran it.  `order` places the step in the phase report; it is the step's
+    // position along the pipeline, so the report reads in execution order no
+    // matter which island happened to reach the step first.
+    void accumulateStageTime(const char* name, float order, long long microseconds);
+
+    // A handler for one stage of one island: maps the stage's own 0..1 fraction
+    // onto [begin, end] of that island's progress, and times each named step on
+    // the way through for the phase report.  `stageOrder` is where the stage sits
+    // along the pipeline, so the report reads in execution order.  Only the
+    // island's own worker thread calls the result.
+    ProgressHandler makeStageProgress(size_t islandIndex, float begin, float end, float stageOrder);
+
+    const std::vector<std::string>& phaseReport()
+    {
+        return m_phaseReport;
+    }
 
     static const double m_defaultSharpEdgeDegrees;
+
+    // Per-island durations are accumulated in microseconds: a mesh split into
+    // hundreds of islands spends well under a millisecond on most of them, and
+    // truncating each one to whole milliseconds loses the bulk of the total.
+    struct DecimationStats {
+        std::atomic<long long> timeUs { 0 };
+        std::atomic<size_t> islandsDecimated { 0 };
+        std::atomic<size_t> islandsConsidered { 0 };
+        std::atomic<size_t> trianglesBefore { 0 };
+        std::atomic<size_t> trianglesAfter { 0 };
+    };
 
 private:
     std::vector<Vector3> m_vertices;
     std::vector<std::vector<size_t>> m_triangles;
     std::vector<Vector3> m_remeshedVertices;
     std::vector<std::vector<size_t>> m_remeshedQuads;
+    std::vector<Vector3> m_decimatedVertices;
+    std::vector<std::vector<size_t>> m_decimatedTriangles;
+    bool m_decimated = false;
     std::vector<Vector3> m_isotropicVertices;
     std::vector<std::vector<size_t>> m_isotropicTriangles;
     std::vector<std::vector<Vector2>> m_isotropicTriangleUvs;
@@ -159,7 +213,21 @@ private:
     std::vector<std::pair<Vector3, Vector3>> m_isotropicExtractedConnections;
     std::vector<float> m_threadProgress;
     std::vector<float> m_threadProgressWeights;
+    std::vector<const char*> m_threadStatus;
+    // The weighted sum of m_threadProgress, kept incrementally so that a
+    // fine-grained update stays O(1) rather than a scan of every island.
+    double m_progressSum = 0.0;
+    int m_reportedPermille = -1;
+    const char* m_reportedStatus = nullptr;
+    std::vector<std::string> m_phaseReport;
     mutable std::mutex m_progressMutex;
+    std::mutex m_stageTimingMutex;
+    struct StageTime {
+        std::string name;
+        float order = 0.0f;
+        long long microseconds = 0;
+    };
+    std::vector<StageTime> m_stageTimes;
     double m_scaling = 0.0;
     size_t m_targetTriangleCount = 0;
     double m_voxelSize = 0.0;
@@ -174,13 +242,24 @@ private:
     static double calculateAverageEdgeLength(const std::vector<Vector3>& vertices,
         const std::vector<std::vector<size_t>>& faces);
     void initializeVoxelSize();
+    static bool decimateIfTooDense(std::vector<Vector3>& vertices,
+        std::vector<std::vector<size_t>>& triangles,
+        double voxelSize,
+        double sharpEdgeDegrees,
+        size_t islandIndex,
+        DecimationStats* stats);
     static void resample(std::vector<Vector3>& vertices,
         std::vector<std::vector<size_t>>& triangles,
         double voxelSize,
         double adaptivity,
         double sharpEdgeDegrees,
         double smoothNormalDegrees,
-        size_t islandIndex);
+        size_t islandIndex,
+        DecimationStats* decimationStats,
+        std::atomic<long long>* adaptiveFieldTimeUs,
+        const ProgressHandler* progressHandler,
+        std::vector<Vector3>* decimatedVerticesOut,
+        std::vector<std::vector<size_t>>* decimatedTrianglesOut);
     static double calculateMeshArea(const std::vector<Vector3>& vertices,
         const std::vector<std::vector<size_t>>& triangles);
 };

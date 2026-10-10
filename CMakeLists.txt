@@ -43,7 +43,9 @@ add_library(autoremesher-core STATIC
     src/AutoRemesher/surfacemesh.cpp
     thirdparty/isotropicremesher/axisalignedboundingboxtree.cpp
     thirdparty/isotropicremesher/isotropichalfedgemesh.cpp
-    thirdparty/isotropicremesher/isotropicremesher.cpp)
+    thirdparty/isotropicremesher/isotropicremesher.cpp
+    thirdparty/meshoptimizer/src/indexgenerator.cpp
+    thirdparty/meshoptimizer/src/simplifier.cpp)
 target_compile_features(autoremesher-core PUBLIC cxx_std_14)
 target_compile_definitions(autoremesher-core PUBLIC EIGEN_MPL2_ONLY)
 if(WIN32)
@@ -60,6 +62,7 @@ target_include_directories(autoremesher-core
     PRIVATE
         src
         thirdparty/isotropicremesher
+        thirdparty/meshoptimizer/src
         ${TBB_INCLUDE_DIR})
 target_link_libraries(autoremesher-core PUBLIC ${TBB_LIBRARY})
 if(APPLE)

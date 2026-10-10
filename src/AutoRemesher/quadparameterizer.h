@@ -22,6 +22,7 @@
 #ifndef AUTO_REMESHER_QUAD_PARAMETERIZER_H
 #define AUTO_REMESHER_QUAD_PARAMETERIZER_H
 
+#include <AutoRemesher/Progress>
 #include <AutoRemesher/Vector2>
 #include <AutoRemesher/Vector3>
 #include <cstddef>
@@ -43,7 +44,10 @@ public:
         double hardEdgeDegrees, Result* result,
         const std::vector<double>* faceScaling = nullptr,
         const std::vector<double>* faceScalingU = nullptr,
-        const std::vector<double>* faceScalingV = nullptr);
+        const std::vector<double>* faceScalingV = nullptr,
+        // Reports 0..1 across the quad cover solve, which is the single longest
+        // step of the whole pipeline and would otherwise be one silent block.
+        const ProgressHandler* progressHandler = nullptr);
 };
 
 }
