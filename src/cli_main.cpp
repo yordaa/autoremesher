@@ -20,6 +20,7 @@
  * SOFTWARE.
  */
 
+#define TINYOBJLOADER_USE_DOUBLE
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
@@ -183,6 +184,13 @@ bool loadTriangles(const std::string& path, MeshData* mesh)
                 triangle.push_back(static_cast<size_t>(index));
             }
             if (triangle[0] == triangle[1] || triangle[1] == triangle[2] || triangle[2] == triangle[0]) {
+                std::cerr << "Input contains a degenerate triangle" << std::endl;
+                return false;
+            }
+            const auto areaNormal = AutoRemesher::Vector3::crossProduct(
+                mesh->vertices[triangle[1]] - mesh->vertices[triangle[0]],
+                mesh->vertices[triangle[2]] - mesh->vertices[triangle[0]]);
+            if (areaNormal.x() == 0.0 && areaNormal.y() == 0.0 && areaNormal.z() == 0.0) {
                 std::cerr << "Input contains a degenerate triangle" << std::endl;
                 return false;
             }

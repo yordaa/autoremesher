@@ -10,6 +10,30 @@ import time
 import unittest
 
 
+CUBE_OBJ = """\
+v -1 -1 -1
+v 1 -1 -1
+v 1 1 -1
+v -1 1 -1
+v -1 -1 1
+v 1 -1 1
+v 1 1 1
+v -1 1 1
+f 1 4 3
+f 1 3 2
+f 5 6 7
+f 5 7 8
+f 1 2 6
+f 1 6 5
+f 2 3 7
+f 2 7 6
+f 3 4 8
+f 3 8 7
+f 4 1 5
+f 4 5 8
+"""
+
+
 def mesh_metrics(path):
     vertex_count = 0
     faces = []
@@ -177,31 +201,7 @@ class CliBlackBoxTest(unittest.TestCase):
             root = pathlib.Path(directory)
             source = root / "cube.obj"
             output = root / "output.obj"
-            source.write_text(
-                """\
-v -1 -1 -1
-v 1 -1 -1
-v 1 1 -1
-v -1 1 -1
-v -1 -1 1
-v 1 -1 1
-v 1 1 1
-v -1 1 1
-f 1 4 3
-f 1 3 2
-f 5 6 7
-f 5 7 8
-f 1 2 6
-f 1 6 5
-f 2 3 7
-f 2 7 6
-f 3 4 8
-f 3 8 7
-f 4 1 5
-f 4 5 8
-""",
-                encoding="utf-8",
-            )
+            source.write_text(CUBE_OBJ, encoding="utf-8")
 
             result = self.run_cli(
                 source, output, target_quads="50", threads="1", measured_case="hard-surface"
@@ -209,6 +209,64 @@ f 4 5 8
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assert_topology_preserved(source, output, result, "hard-surface")
+
+    def test_obj_double_precision_preserves_translated_cube(self):
+        reference_bounds = None
+        for offset in (0.0, 1e8):
+            with self.subTest(offset=offset), tempfile.TemporaryDirectory() as directory:
+                source = pathlib.Path(directory) / "cube.obj"
+                output = pathlib.Path(directory) / "output.obj"
+                lines = []
+                for line in CUBE_OBJ.splitlines():
+                    values = line.split()
+                    if values[0] == "v":
+                        line = "v " + " ".join(f"{float(value) + offset:.17g}" for value in values[1:])
+                    lines.append(line)
+                source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                result = self.run_cli(source, output, target_quads="1000")
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_topology_preserved(source, output, result, f"cube-offset-{offset:g}")
+                positions = []
+                directed_edges = collections.Counter()
+                for line in output.read_text(encoding="utf-8").splitlines():
+                    values = line.split()
+                    if values[0] == "v":
+                        positions.append(tuple(float(value) for value in values[1:]))
+                    elif values[0] == "f":
+                        face = [int(value) - 1 for value in values[1:]]
+                        for index, first in enumerate(face):
+                            directed_edges[(first, face[(index + 1) % len(face)])] += 1
+                        origin = positions[face[0]]
+                        area_squared = 0.0
+                        for index in range(1, len(face) - 1):
+                            left = [value - base for value, base in zip(positions[face[index]], origin)]
+                            right = [value - base for value, base in zip(positions[face[index + 1]], origin)]
+                            area_squared += sum(
+                                (left[i] * right[(i + 1) % 3] - left[(i + 1) % 3] * right[i]) ** 2
+                                for i in range(3)
+                            )
+                        self.assertGreater(area_squared, 0.0, "output has a zero-area face")
+                for (first, second), count in directed_edges.items():
+                    self.assertEqual(count, 1)
+                    self.assertEqual(directed_edges[(second, first)], 1)
+                bounds = [
+                    (min(point[axis] for point in positions) - offset,
+                     max(point[axis] for point in positions) - offset)
+                    for axis in range(3)
+                ]
+                print(f"PLACEMENT case=cube-offset-{offset:g} local_bounds={bounds}", flush=True)
+                # Compare placement to the unshifted run without assuming exact remesh geometry.
+                for lower, upper in bounds:
+                    self.assertAlmostEqual(lower, -1.0, delta=0.1)
+                    self.assertAlmostEqual(upper, 1.0, delta=0.1)
+                if reference_bounds is None:
+                    reference_bounds = bounds
+                else:
+                    for actual, reference in zip(bounds, reference_bounds):
+                        for coordinate, expected in zip(actual, reference):
+                            self.assertAlmostEqual(coordinate, expected, delta=0.02)
 
     def test_open_mesh_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -309,7 +367,25 @@ f 2 3 4
 
             result = self.run_cli(source, output, target_quads="24")
 
-            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("degenerate triangle", result.stderr)
+            self.assertFalse(output.exists())
+
+    def test_already_rounded_cube_is_rejected_before_remeshing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / "rounded-cube.obj"
+            output = pathlib.Path(directory) / "output.obj"
+            lines = [
+                "v 100000000 100000000 100000000" if line.startswith("v ") else line
+                for line in CUBE_OBJ.splitlines()
+            ]
+            source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = self.run_cli(source, output, target_quads="1000")
+
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("degenerate triangle", result.stderr)
+            self.assertNotIn("RESULT ", result.stdout)
             self.assertFalse(output.exists())
 
     def test_process_can_be_cancelled_without_final_output(self):
