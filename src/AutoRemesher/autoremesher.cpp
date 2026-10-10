@@ -31,8 +31,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <queue>
+#include <set>
 // Qt defines `emit` as a macro, which collides with TBB profiling.h's `void emit()`.
 // macOS `<mach/mach.h>` also defines `emit`. Undefine before including TBB headers.
 #if defined(__APPLE__) || defined(emit)
@@ -273,6 +275,92 @@ void AutoRemesher::updateProgress(size_t threadIndex, float progress)
         parallelPhaseBegin + (parallelPhaseEnd - parallelPhaseBegin) * islandWeightedAvg, "");
 }
 
+bool AutoRemesher::hasClosedOrientedEdges(const std::vector<std::vector<size_t>>& faces)
+{
+    struct EdgeUse {
+        size_t count = 0;
+        int direction = 0;
+    };
+    std::map<std::pair<size_t, size_t>, EdgeUse> edges;
+    for (const auto& face : faces) {
+        for (size_t i = 0; i < face.size(); ++i) {
+            const size_t from = face[i];
+            const size_t to = face[(i + 1) % face.size()];
+            auto& use = edges[std::minmax(from, to)];
+            ++use.count;
+            use.direction += from < to ? 1 : -1;
+        }
+    }
+    return !edges.empty() && std::all_of(edges.begin(), edges.end(), [](const auto& edge) {
+        return edge.second.count == 2 && edge.second.direction == 0;
+    });
+}
+
+const char* AutoRemesher::validateOutputIsland(const std::vector<Vector3>& vertices,
+    const std::vector<std::vector<size_t>>& faces, bool closedInput)
+{
+    if (vertices.empty() || faces.empty())
+        return "no usable faces";
+    for (const auto& vertex : vertices) {
+        if (!std::isfinite(vertex.x()) || !std::isfinite(vertex.y()) || !std::isfinite(vertex.z()))
+            return "non-finite vertex";
+    }
+    std::set<std::vector<size_t>> cycles;
+    for (const auto& face : faces) {
+        if (face.size() < 3)
+            return "face has fewer than three corners";
+        std::unordered_set<size_t> corners;
+        for (const size_t index : face) {
+            if (index >= vertices.size())
+                return "face vertex index is out of range";
+            if (!corners.insert(index).second)
+                return "face repeats a corner";
+        }
+
+        // Unique indices give a unique minimum corner. The smaller neighbor
+        // chooses the canonical direction, independent of winding and rotation.
+        const size_t first = std::min_element(face.begin(), face.end()) - face.begin();
+        const bool forward = face[(first + 1) % face.size()] < face[(first + face.size() - 1) % face.size()];
+        std::vector<size_t> cycle;
+        cycle.reserve(face.size());
+        for (size_t i = 0; i < face.size(); ++i)
+            cycle.push_back(face[(first + (forward ? i : face.size() - i)) % face.size()]);
+        if (!cycles.insert(std::move(cycle)).second)
+            return "duplicate polygon cycle";
+
+        // Center and scale this face before its area calculation. Checking for
+        // exact zero imposes no world-unit tolerance on small or translated faces.
+        const Vector3 origin = vertices[face.front()];
+        double scale = 0.0;
+        for (const size_t index : face) {
+            const Vector3 edge = vertices[index] - origin;
+            if (!std::isfinite(edge.x()) || !std::isfinite(edge.y()) || !std::isfinite(edge.z()))
+                return "face extent is not finite";
+            for (size_t axis = 0; axis < 3; ++axis)
+                scale = std::max(scale, std::fabs(edge[axis]));
+        }
+        if (0.0 == scale)
+            return "zero-area face";
+        Vector3 normal(0.0, 0.0, 0.0);
+        for (size_t i = 0; i < face.size(); ++i)
+            normal += Vector3::crossProduct((vertices[face[i]] - origin) / scale,
+                (vertices[face[(i + 1) % face.size()]] - origin) / scale);
+        if (normal.x() == 0.0 && normal.y() == 0.0 && normal.z() == 0.0)
+            return "zero-area face";
+    }
+    // The GUI/core also accepts open input. Preserve that path's existing
+    // boundary behavior; the CLI's supported closed input must remain closed.
+    if (closedInput) {
+        if (!hasClosedOrientedEdges(faces))
+            return "edges are not paired with opposite directions";
+        std::vector<std::vector<std::vector<size_t>>> islands;
+        MeshSeparator::splitToIslands(faces, islands);
+        if (islands.size() != 1)
+            return "input island split into multiple output components";
+    }
+    return nullptr;
+}
+
 bool AutoRemesher::remesh()
 {
     m_remeshedVertices.clear();
@@ -323,6 +411,7 @@ bool AutoRemesher::remesh()
     struct IslandContext {
         std::vector<Vector3> vertices;
         std::vector<std::vector<size_t>> triangles;
+        bool closedInput;
         double voxelSize;
         double scaling;
         double adaptivity;
@@ -353,6 +442,8 @@ bool AutoRemesher::remesh()
             context.triangles.push_back(triangle);
         }
 
+        // Preserve the input contract before resampling mutates the island.
+        context.closedInput = hasClosedOrientedEdges(context.triangles);
         context.scaling = m_scaling;
         context.voxelSize = m_voxelSize;
         context.adaptivity = m_adaptivity;
@@ -544,8 +635,12 @@ bool AutoRemesher::remesh()
                         delete thread.remesher;
                         thread.remesher = nullptr;
                     } else {
-                        thread.succeeded = !thread.remesher->remeshedVertices().empty()
-                            && !thread.remesher->remeshedQuads().empty();
+                        const char* reason = validateOutputIsland(thread.remesher->remeshedVertices(),
+                            thread.remesher->remeshedQuads(), thread.island->closedInput);
+                        thread.succeeded = nullptr == reason;
+                        if (reason)
+                            std::cerr << "Island " << thread.islandIndex + 1
+                                      << ": invalid reconstruction: " << reason << std::endl;
                         thread.capturedExtractedConnections = thread.remesher->extractedConnections();
                         thread.capturedExtractedConnectionMoved = thread.remesher->extractedConnectionMoved();
                     }
